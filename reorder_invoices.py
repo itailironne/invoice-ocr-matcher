@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import sys
+from collections import Counter
 from dataclasses import dataclass, field, asdict
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -1257,6 +1258,390 @@ def extract_single_file(
 
 
 # ---------------------------------------------------------------------------
+# Stage 6: audit / run report (Hebrew markdown)
+# ---------------------------------------------------------------------------
+def _load_table_csv(path: Path) -> list[TableRow]:
+    """Read a table_extracted.csv back into TableRow objects."""
+    rows: list[TableRow] = []
+    if not path.exists():
+        return rows
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        for r in csv.DictReader(f):
+            try:
+                rows.append(TableRow(
+                    index=int(r.get("index", len(rows))),
+                    supplier=(r.get("supplier") or "").strip(),
+                    amount=Decimal(r["amount"]) if r.get("amount") else None,
+                    date=_norm_date(r["date"]) if r.get("date") else None,
+                    id_number=(r.get("id_number") or "").strip() or None,
+                ))
+            except (ValueError, InvalidOperation):
+                continue
+    return rows
+
+
+def _classify_unmatched(
+    row: TableRow,
+    clusters: list[InvoiceCluster],
+    used_cluster_ids: set[int],
+    vat_rate: Decimal,
+    table_rows: list[TableRow],
+) -> tuple[str, list[dict]]:
+    """Return (reason_hebrew, top3_candidates) for an unmatched row."""
+    # Score against every cluster
+    scored = []
+    for c in clusters:
+        sup = _score_supplier(row.supplier, c.supplier)
+        amt = _score_amount(row.amount, c.amount, vat_rate)
+        scored.append({
+            "cluster": c,
+            "sup": sup,
+            "amt": amt,
+            "in_use": c.cluster_index in used_cluster_ids,
+        })
+    scored.sort(key=lambda x: (x["sup"] + x["amt"]), reverse=True)
+    top3 = scored[:3]
+
+    # Categorize the cause based on the top candidate
+    if not top3 or top3[0]["sup"] == 0 and top3[0]["amt"] == 0:
+        return "אין מועמד מתאים כלל בסריקות", top3
+
+    top = top3[0]
+    if top["amt"] == 100 and top["sup"] == 0 and top["in_use"]:
+        return "סכום תואם בדיוק לאשכול אחר — סבירות גבוהה שזו שורת טבלה כפולה (התרסקות עם שורה אחרת)", top3
+    if top["amt"] == 100 and top["sup"] == 0:
+        return "סכום תואם אך השמות שונים — סבירות גבוהה שמדובר בתעתיק עברית↔אנגלית (לדוגמה וויטסנט ↔ WhiteScent)", top3
+    if top["sup"] >= 80 and top["amt"] == 0:
+        # Check if it's because of duplicate table row
+        same_amount_rows = [r for r in table_rows if r.index != row.index and r.amount == row.amount and _score_supplier(r.supplier, row.supplier) >= 80]
+        if same_amount_rows:
+            return f"שורת טבלה כפולה — שורה {same_amount_rows[0].index} בעלת אותו ספק וסכום זכתה באשכול המתאים היחיד", top3
+        return "ספק זהה אך אף סריקה לא תואמת בסכום (אולי הסריקה חסרת סכום או הסכום שגוי)", top3
+    if top["sup"] >= 80 and 0 < top["amt"] < 100:
+        return f"ספק זהה אך הסכום חורג מטווח הסבילות ({100 - int(top['amt'])}% פער)", top3
+    if top["sup"] < 60:
+        return "אף סריקה לא תואמת בשם הספק (סף מינימלי 60)", top3
+    return "התאמה חלקית בלבד — לא מספיק לעבור את הסף", top3
+
+
+def _classify_low_confidence(match_row: dict, vat_rate: Decimal) -> str:
+    """Explain WHY a row got low_confidence status (vs full match)."""
+    try:
+        score = float(match_row.get("match_score", 0))
+    except (ValueError, TypeError):
+        score = 0
+    scan_sup = (match_row.get("scan_supplier") or match_row.get("supplier") or "").strip()
+    table_sup = (match_row.get("table_supplier") or match_row.get("supplier") or "").strip()
+    scan_amt = match_row.get("scan_amount") or ""
+    table_amt_pre = match_row.get("table_amount_pre_vat") or match_row.get("amount") or ""
+    table_amt_with = match_row.get("table_amount_with_vat") or ""
+
+    reasons = []
+    if scan_sup and table_sup:
+        s = _score_supplier(table_sup, scan_sup)
+        if s < 80:
+            reasons.append(f"חוסר חפיפה חלקי בשם הספק (ציון ספק {int(s)})")
+    elif scan_sup and not table_sup:
+        reasons.append("אין שם ספק בצד הטבלה להשוואה")
+
+    if scan_amt and table_amt_pre:
+        try:
+            sa = abs(Decimal(scan_amt))
+            ta = abs(Decimal(table_amt_with) if table_amt_with else Decimal(table_amt_pre) * (Decimal(1) + vat_rate))
+            diff_pct = float(abs(sa - ta) / max(sa, ta)) * 100
+            if diff_pct > 1:
+                reasons.append(f"פער סכום של {diff_pct:.1f}% (טבלה כולל מע״מ: {ta}, סריקה: {sa})")
+        except (ValueError, InvalidOperation):
+            pass
+    elif not scan_amt:
+        reasons.append("חסר סכום בסריקה")
+
+    if not reasons:
+        if score < 90:
+            reasons.append(f"ציון התאמה משוקלל ({score}) מתחת לסף ההתאמה המלאה (90)")
+        else:
+            reasons.append("אחד מהשדות אינו מושלם — מומלץ לבדוק ידנית")
+    return "; ".join(reasons)
+
+
+def generate_run_report(
+    out_dir: str | Path,
+    *,
+    vat_rate: Decimal = DEFAULT_VAT_RATE,
+) -> str:
+    """Read the output CSVs in `out_dir`, synthesize a Hebrew markdown audit
+    report, write `out_dir/run_report.md`, and return the text."""
+    out_dir = Path(out_dir)
+
+    table_rows = _load_table_csv(out_dir / "table_extracted.csv")
+    pages: list[OcrPage] = []
+    extracted_csv = out_dir / "all_invoices_extracted.csv"
+    if not extracted_csv.exists():
+        extracted_csv = out_dir / "extracted_invoices.csv"
+    if extracted_csv.exists():
+        pages = load_extracted_csv(extracted_csv)
+
+    # Load match_report.csv — tolerate both old and new schemas.
+    match_csv = out_dir / "match_report.csv"
+    if not match_csv.exists():
+        match_csv = out_dir / "match_report_v3.csv"
+    match_rows: list[dict] = []
+    if match_csv.exists():
+        with open(match_csv, encoding="utf-8-sig", newline="") as f:
+            match_rows = list(csv.DictReader(f))
+
+    clusters = cluster_consecutive_pages(pages) if pages else []
+    cluster_by_first_page = {c.page_indices[0]: c for c in clusters}
+
+    # Build the set of cluster indices that are "in use" by some match row.
+    used_cluster_ids: set[int] = set()
+    used_first_pages: set[int] = set()
+    for r in match_rows:
+        pages_str = r.get("matched_cluster_pages") or r.get("matched_page") or ""
+        if not pages_str:
+            continue
+        # Could be "61,62,63,64" or just "61"
+        first = pages_str.split(",")[0].strip()
+        try:
+            first_idx = int(first)
+            used_first_pages.add(first_idx)
+            if first_idx in cluster_by_first_page:
+                used_cluster_ids.add(cluster_by_first_page[first_idx].cluster_index)
+        except ValueError:
+            pass
+
+    # Aggregate stats
+    n_table = len(table_rows)
+    n_pages = len(pages)
+    n_clusters = len(clusters)
+    multi_clusters = sum(1 for c in clusters if len(c.page_indices) >= 2)
+    size_dist = Counter(len(c.page_indices) for c in clusters)
+
+    # Match status counts
+    status_counts: Counter[str] = Counter(r.get("status", "?") for r in match_rows)
+
+    # Per-field null counts
+    tbl_no_supplier = sum(1 for r in table_rows if not r.supplier)
+    tbl_no_amount = sum(1 for r in table_rows if r.amount is None)
+    tbl_no_date = sum(1 for r in table_rows if r.date is None)
+
+    scn_no_supplier = sum(1 for p in pages if not p.supplier)
+    scn_no_amount = sum(1 for p in pages if p.amount is None)
+    scn_no_date = sum(1 for p in pages if p.date is None)
+    scn_no_id = sum(1 for p in pages if not p.id_number)
+    scn_all_null = sum(1 for p in pages if not any([p.supplier, p.amount, p.date, p.id_number]))
+    scn_at_most_one = sum(1 for p in pages if sum(1 for v in [p.supplier, p.amount, p.date, p.id_number] if v) <= 1)
+    scn_complete = sum(1 for p in pages if all([p.supplier, p.amount is not None, p.date, p.id_number]))
+
+    # ----- Build markdown -----
+    lines: list[str] = []
+    A = lines.append
+    A(f"# דוח אבחון — הרצת התאמת חשבוניות")
+    A(f"_תאריך: {datetime.now().strftime('%Y-%m-%d %H:%M')}_  ")
+    A(f"_תיקייה: `{out_dir.name}`_")
+    A("")
+    A("---")
+    A("")
+
+    # 1. Run summary
+    A("## 1. סיכום הרצה")
+    A("")
+    A(f"- שורות שחולצו מהטבלה: **{n_table}**")
+    A(f"- עמודים סרוקים: **{n_pages}**")
+    A(f"- חשבוניות לוגיות (אשכולות): **{n_clusters}** (מתוכן {multi_clusters} רב־עמודיות)")
+    A(f"- שיעור מע״מ שהוחל על צד הטבלה: **{int(vat_rate * 100)}%**")
+    A("- אלגוריתם התאמה: שני מפתחות (ספק + סכום כולל מע״מ)")
+    A("- ספים: התאמה מלאה ≥ 90, התאמה חלשה ≥ 70, אחרת לא הותאם")
+    A("")
+
+    # 2. Extraction quality
+    A("## 2. איכות החילוץ")
+    A("")
+    A("### צד הטבלה")
+    A(f"- חסר ספק: {tbl_no_supplier} שורות")
+    A(f"- חסר סכום: {tbl_no_amount} שורות")
+    A(f"- חסר תאריך: {tbl_no_date} שורות")
+    A("")
+    A("### צד הסריקות")
+    A(f"- עמודים עם כל ארבעת השדות: **{scn_complete} מתוך {n_pages}** ({(scn_complete * 100 // n_pages) if n_pages else 0}%)")
+    A(f"- עמודים ריקים לחלוטין: {scn_all_null}")
+    A(f"- עמודים עם שדה אחד בלבד (סביר עמוד המשך): {scn_at_most_one}")
+    A(f"- חסר ספק: {scn_no_supplier} עמודים")
+    A(f"- חסר סכום: {scn_no_amount} עמודים  ⚠️ (אלה לא יוכלו להיות מותאמים)")
+    A(f"- חסר תאריך: {scn_no_date} עמודים")
+    A(f"- חסר מס׳ עוסק: {scn_no_id} עמודים")
+    A("")
+
+    # 3. Clusters
+    A("## 3. אשכולות (חשבוניות רב־עמודיות)")
+    A("")
+    A(f"- סך אשכולות: {n_clusters}")
+    A(f"- אשכולות רב־עמודיים: {multi_clusters}")
+    A(f"- התפלגות גדלים: " + ", ".join(f"גודל {k}: {v}" for k, v in sorted(size_dist.items())))
+    A("")
+    if multi_clusters:
+        A("**רשימת אשכולות רב־עמודיים:**")
+        for c in clusters:
+            if len(c.page_indices) >= 2:
+                A(f"- עמודים `{c.page_indices}` ← {c.supplier or '(ספק לא ידוע)'}")
+        A("")
+
+    # 4. Match results
+    A("## 4. תוצאות התאמה")
+    A("")
+    matched_n = status_counts.get("matched", 0)
+    low_n = status_counts.get("low_confidence", 0)
+    unmatched_n = status_counts.get("unmatched", 0)
+    leftover_n = status_counts.get("leftover", 0)
+    A(f"- ✅ הותאמו: **{matched_n}**")
+    A(f"- ⚠️ התאמה חלשה: **{low_n}**")
+    A(f"- ❌ לא הותאמו: **{unmatched_n}**")
+    if leftover_n:
+        A(f"- שאריות (סריקות ללא שורת טבלה תואמת): **{leftover_n}**")
+    if n_table:
+        A(f"- סה״כ הוקצו לשורות טבלה: **{matched_n + low_n}** מתוך {n_table} ({((matched_n + low_n) * 100 // n_table)}%)")
+    A("")
+
+    # 5. Detailed problems
+    A("## 5. בעיות מפורטות")
+    A("")
+
+    # 5a. Unmatched
+    unmatched_match_rows = [r for r in match_rows if r.get("status") == "unmatched" and (r.get("table_row_index") or r.get("table_row_index") == "0")]
+    A(f"### שורות שלא הותאמו ({len(unmatched_match_rows)})")
+    A("")
+    if not unmatched_match_rows:
+        A("_אין שורות לא־מותאמות. כל שורות הטבלה קיבלו הקצאה._")
+        A("")
+    else:
+        for r in unmatched_match_rows:
+            try:
+                row_idx = int(r.get("table_row_index", "")) if r.get("table_row_index") else None
+            except ValueError:
+                row_idx = None
+            sup = r.get("table_supplier") or r.get("supplier") or ""
+            amt = r.get("table_amount_pre_vat") or r.get("amount") or ""
+            d = r.get("table_date") or r.get("date") or ""
+            A(f"#### שורה {row_idx}: `{sup}` — {amt} ₪ ({d})")
+
+            # Find this row in table_rows for full data
+            tbl_row = next((t for t in table_rows if t.index == row_idx), None) if row_idx is not None else None
+            if tbl_row:
+                reason, top3 = _classify_unmatched(tbl_row, clusters, used_cluster_ids, vat_rate, table_rows)
+                A(f"- **סיבה**: {reason}")
+                if top3:
+                    A("- **מועמדים מובילים:**")
+                    for i, cand in enumerate(top3, 1):
+                        c = cand["cluster"]
+                        in_use_mark = " ⚠️ (תפוס על־ידי שורה אחרת)" if cand["in_use"] else ""
+                        A(f"  {i}. אשכול עמודים `{c.page_indices}` — ספק: `{c.supplier or '?'}`, סכום: {c.amount or '?'}{in_use_mark}")
+                        A(f"     - ציון ספק: {int(cand['sup'])}, ציון סכום: {int(cand['amt'])}")
+            else:
+                A("- _לא הצלחתי לטעון את פרטי השורה מהטבלה._")
+            A("")
+
+    # 5b. Low confidence
+    low_match_rows = [r for r in match_rows if r.get("status") == "low_confidence"]
+    A(f"### שורות בהתאמה חלשה ({len(low_match_rows)})")
+    A("")
+    if not low_match_rows:
+        A("_אין שורות בהתאמה חלשה._")
+        A("")
+    else:
+        A("_שורות אלה הותאמו אך הציון לא הגיע ל־90. מומלץ לבדוק ידנית במיקום ה־PDF המצוין._")
+        A("")
+        for r in low_match_rows:
+            pos = r.get("output_pdf_position") or "?"
+            row_idx = r.get("table_row_index") or "?"
+            tbl_sup = r.get("table_supplier") or r.get("supplier") or ""
+            scn_sup = r.get("scan_supplier") or ""
+            score = r.get("match_score") or "?"
+            A(f"#### עמוד PDF {pos} · שורה {row_idx}: `{tbl_sup}` ↔ `{scn_sup}` (ציון {score})")
+            A(f"- **מה חלש**: {_classify_low_confidence(r, vat_rate)}")
+            A("")
+
+    # 6. Scan issues
+    A("## 6. בעיות בצד הסריקות")
+    A("")
+    problem_pages = [p for p in pages if (p.supplier is None or p.amount is None or p.date is None or p.id_number is None)]
+    if not problem_pages:
+        A("_כל הסריקות חולצו עם כל ארבעת השדות. מצוין._")
+        A("")
+    else:
+        # Categorize
+        blank_pages = [p for p in pages if not any([p.supplier, p.amount, p.date, p.id_number])]
+        no_amount_pages = [p for p in pages if p.amount is None and p.supplier]
+        no_supplier_pages = [p for p in pages if not p.supplier and (p.amount is not None or p.date or p.id_number)]
+
+        if blank_pages:
+            A(f"### עמודים ריקים לחלוטין ({len(blank_pages)})")
+            A("_נראה כעמודי הפרדה / ריקים. בדוק את ה־PDF המקורי._")
+            for p in blank_pages[:20]:
+                A(f"- עמוד {p.page_index}")
+            A("")
+
+        if no_amount_pages:
+            A(f"### עמודים שחסר בהם הסכום ({len(no_amount_pages)})")
+            A("_עמודים אלה לא יוכלו להיות מותאמים בקפדנות. סבירות גבוהה שהם עמוד 2 של חשבונית רב־עמודית (אם עמוד {N-1} הוא אותו ספק) או סריקה באיכות נמוכה._")
+            for p in no_amount_pages[:20]:
+                A(f"- עמוד {p.page_index}: `{p.supplier}`")
+            if len(no_amount_pages) > 20:
+                A(f"- _...ועוד {len(no_amount_pages) - 20} עמודים_")
+            A("")
+
+        if no_supplier_pages:
+            A(f"### עמודים שחסר בהם הספק ({len(no_supplier_pages)})")
+            for p in no_supplier_pages[:20]:
+                fields = []
+                if p.amount: fields.append(f"סכום={p.amount}")
+                if p.date: fields.append(f"תאריך={p.date}")
+                if p.id_number: fields.append(f"ע.מ.={p.id_number}")
+                A(f"- עמוד {p.page_index}: " + ", ".join(fields))
+            A("")
+
+    # 7. Recommendations
+    A("## 7. המלצות")
+    A("")
+    recs: list[str] = []
+    if n_pages and scn_no_amount / n_pages > 0.1:
+        recs.append(f"📈 **העלאת רזולוציה**: ב־{scn_no_amount} עמודים מתוך {n_pages} ({scn_no_amount * 100 // n_pages}%) חסר הסכום. שקול להעלות את `RENDER_DPI` מ־200 ל־300 לחילוץ טוב יותר של מספרים קטנים.")
+    transliteration_count = 0
+    for r in unmatched_match_rows:
+        sup = r.get("table_supplier") or r.get("supplier") or ""
+        amt = r.get("table_amount_pre_vat") or r.get("amount") or ""
+        if amt:
+            try:
+                row_idx = int(r.get("table_row_index", "-1"))
+                tbl = next((t for t in table_rows if t.index == row_idx), None)
+                if tbl:
+                    for c in clusters:
+                        if c.cluster_index in used_cluster_ids:
+                            continue
+                        if _score_amount(tbl.amount, c.amount, vat_rate) == 100 and _score_supplier(tbl.supplier, c.supplier) == 0:
+                            transliteration_count += 1
+                            break
+            except ValueError:
+                pass
+    if transliteration_count >= 3:
+        recs.append(f"🔤 **טבלת תרגום ידני**: {transliteration_count} שורות נכשלו עם סכום מושלם אך ספק שונה — סבירות גבוהה לתעתיק עברית↔אנגלית. שקול להוסיף מילון אליאסים (לדוגמה: `וויטסנט` → `WhiteScent`).")
+    if unmatched_n:
+        recs.append(f"👀 **בדיקה ידנית**: {unmatched_n} שורות דורשות בדיקה ידנית. ראה סעיף 5 לפרטים.")
+    if low_n:
+        recs.append(f"🔍 **אימות**: {low_n} שורות בהתאמה חלשה — מומלץ לפתוח את ה־PDF במיקומים המצוינים ולוודא שההתאמה נכונה.")
+    if not recs:
+        recs.append("✨ אין המלצות — ההרצה הצליחה ללא חריגים משמעותיים.")
+    for r in recs:
+        A(f"- {r}")
+    A("")
+
+    text = "\n".join(lines)
+    report_path = out_dir / "run_report.md"
+    report_path.write_text(text, encoding="utf-8-sig")
+    log.info("wrote %s (%d chars)", report_path, len(text))
+    return text
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 def run(
@@ -1284,6 +1669,11 @@ def run(
     write_report_csv(matches, out_csv)
     write_extracted_csv(pages, extracted_csv)
     write_table_csv(rows, table_csv)
+    # Generate the Hebrew audit report from the CSVs that were just written.
+    try:
+        generate_run_report(out_dir, vat_rate=vat_rate)
+    except Exception as e:
+        log.warning("run_report generation failed: %s", e)
     return {
         "rows": len(rows),
         "pages": len(pages),

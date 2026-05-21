@@ -115,15 +115,9 @@ def reorder():
         log.exception("job %s failed", job_dir.name)
         return render_template("error.html", message=f"{type(e).__name__}: {e}", trace=traceback.format_exc()), 500
 
-    return render_template(
-        "results.html",
-        job=job_dir.name,
-        summary=summary,
-        out_pdf="output_sorted.pdf",
-        out_csv="match_report.csv",
-        extracted_csv="all_invoices_extracted.csv",
-        table_csv="table_extracted.csv",
-    )
+    # Redirect to /results/<job> so the same view that renders past runs handles this one too
+    # (single code path for the results page + run report).
+    return redirect(url_for("view_results", job=job_dir.name))
 
 
 @app.route("/test", methods=["GET", "POST"])
@@ -300,7 +294,23 @@ def view_results(job: str):
             pages_count = sum(1 for _ in csv.DictReader(f))
 
     table_csv_name = _pick_newest(job_dir, ["table_extracted.csv"])
-    pdf_name = _pick_newest(job_dir, ["output_sorted_v2.pdf", "output_sorted.pdf"])
+    pdf_name = _pick_newest(job_dir, ["output_sorted_v3.pdf", "output_sorted_v2.pdf", "output_sorted.pdf"])
+
+    # Run report (generate on the fly if missing — instant, no API calls)
+    report_md_path = job_dir / "run_report.md"
+    if not report_md_path.exists():
+        try:
+            ri.generate_run_report(job_dir)
+        except Exception as e:
+            log.warning("on-demand report generation failed for %s: %s", job, e)
+    report_html = None
+    if report_md_path.exists():
+        try:
+            import markdown as _md
+            report_md_text = report_md_path.read_text(encoding="utf-8-sig")
+            report_html = _md.markdown(report_md_text, extensions=["tables", "fenced_code"])
+        except Exception as e:
+            log.warning("markdown render failed: %s", e)
 
     summary = {
         "rows": len(report_rows),
@@ -318,6 +328,8 @@ def view_results(job: str):
         extracted_csv=extracted_csv_name,
         table_csv=table_csv_name,
         report_rows=report_rows[:50],
+        report_html=report_html,
+        report_md_filename="run_report.md" if report_md_path.exists() else None,
     )
 
 
