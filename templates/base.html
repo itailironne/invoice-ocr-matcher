@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}מערכת התאמת חשבוניות{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@500;700;900&family=Heebo:wght@400;500;600;700&family=Playfair+Display:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f7f4ec;
+    --bg-2: #efeadd;
+    --paper: #ffffff;
+    --paper-edge: #fbf9f4;
+    --ink: #0b1d3b;        /* deep navy */
+    --ink-2: #1f2a44;
+    --muted: #5a667d;
+    --muted-2: #8a93a6;
+    --rule: #d8d2bf;       /* warm tan rule */
+    --rule-2: #e8e3d3;
+    --gold: #a87f3b;       /* muted gold */
+    --gold-2: #c5a26c;
+    --gold-soft: #f5ecd8;
+    --ok: #1d6f4a;
+    --ok-bg: #ebf3ec;
+    --warn: #8a5a1a;
+    --warn-bg: #faf2e0;
+    --err: #8a1f1f;
+    --err-bg: #f8ebe9;
+    --shadow: 0 1px 0 rgba(11, 29, 59, 0.04), 0 6px 24px -12px rgba(11, 29, 59, 0.18);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: "Heebo", -apple-system, BlinkMacSystemFont, "Segoe UI", Tahoma, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    color: var(--ink);
+    background: var(--bg);
+    background-image:
+      linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+  a { color: var(--ink); text-decoration: none; border-bottom: 1px solid transparent; transition: border-color 0.15s; }
+  a:hover { border-bottom-color: var(--gold); }
+
+  /* Header — bank branding bar */
+  header {
+    background: var(--ink);
+    color: #fff;
+    border-bottom: 3px solid var(--gold);
+  }
+  header .wrap {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 18px 40px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+  }
+  .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    color: #fff;
+    border: 0;
+  }
+  .brand .name {
+    font-family: "Frank Ruhl Libre", "Playfair Display", Georgia, serif;
+    font-weight: 700;
+    font-size: 22px;
+    color: #fff;
+    letter-spacing: 0.01em;
+  }
+  .brand .sub {
+    font-size: 11px;
+    color: var(--gold-2);
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    border-inline-start: 1px solid var(--gold);
+    padding-inline-start: 14px;
+    margin-inline-start: 4px;
+  }
+  header nav { display: flex; gap: 0; margin-inline-start: auto; }
+  header nav a {
+    color: rgba(255,255,255,0.7);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 10px 18px;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -3px; /* sit on the gold underline */
+  }
+  header nav a:hover { color: #fff; border-bottom-color: rgba(255,255,255,0.35); }
+  header nav a.active { color: var(--gold-2); border-bottom-color: var(--gold); }
+
+  /* Layout */
+  main {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 48px 40px 96px;
+  }
+  .card {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 40px 48px;
+    margin-bottom: 28px;
+    box-shadow: var(--shadow);
+    position: relative;
+  }
+  .card.hero {
+    background:
+      linear-gradient(180deg, var(--paper) 0%, var(--paper-edge) 100%),
+      radial-gradient(800px 240px at top right, rgba(197, 162, 108, 0.05), transparent);
+    border-top: 4px solid var(--gold);
+    padding: 48px 56px;
+  }
+  .eyebrow {
+    font-family: "Frank Ruhl Libre", Georgia, serif;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    color: var(--gold);
+    font-weight: 700;
+    margin-bottom: 10px;
+  }
+
+  /* Type */
+  h1, h2, h3 {
+    color: var(--ink);
+    margin: 0 0 10px;
+    font-family: "Frank Ruhl Libre", "Playfair Display", Georgia, serif;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+  }
+  h2 { font-size: 34px; font-weight: 700; }
+  h3 { font-size: 20px; font-weight: 700; margin-top: 30px; text-transform: none; }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .lead { color: var(--ink-2); font-size: 16px; margin-bottom: 24px; line-height: 1.65; }
+  code, .mono {
+    background: var(--gold-soft);
+    padding: 2px 6px;
+    border-radius: 2px;
+    font-size: 13px;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    color: var(--ink);
+    direction: ltr;
+    unicode-bidi: embed;
+  }
+
+  /* Form labels */
+  label {
+    display: block;
+    font-weight: 600;
+    font-size: 14px;
+    margin: 18px 0 8px;
+    color: var(--ink);
+    letter-spacing: 0.01em;
+  }
+  label .step {
+    display: inline-block;
+    width: 22px; height: 22px;
+    background: var(--ink);
+    color: var(--gold-2);
+    text-align: center;
+    line-height: 22px;
+    border-radius: 50%;
+    font-size: 12px;
+    font-weight: 700;
+    margin-inline-end: 8px;
+    font-family: "Frank Ruhl Libre", Georgia, serif;
+  }
+
+  /* Drop zone */
+  .drop {
+    position: relative;
+    border: 1.5px dashed var(--rule);
+    background: var(--paper-edge);
+    border-radius: 4px;
+    padding: 32px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .drop:hover { border-color: var(--gold); background: var(--gold-soft); }
+  .drop.dragging { border-color: var(--gold); border-style: solid; background: var(--gold-soft); }
+  .drop input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .drop .icon {
+    width: 48px; height: 48px;
+    margin: 0 auto 12px;
+    border-radius: 50%;
+    background: var(--ink);
+    color: var(--gold-2);
+    display: grid; place-items: center;
+  }
+  .drop .icon svg { width: 22px; height: 22px; }
+  .drop .title { font-weight: 600; font-size: 15px; margin-bottom: 4px; color: var(--ink); }
+  .drop .hint { font-size: 13px; color: var(--muted); }
+
+  /* Selected file rows */
+  .files { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+  .file-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    background: var(--paper-edge);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    font-size: 13px;
+  }
+  .file-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: ltr; unicode-bidi: embed; text-align: start; }
+  .file-row .size { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .file-row .remove {
+    color: var(--muted-2); background: transparent; border: 0; cursor: pointer;
+    padding: 4px 8px; border-radius: 2px; font-size: 18px; line-height: 1;
+  }
+  .file-row .remove:hover { color: var(--err); background: var(--err-bg); }
+
+  /* Buttons — Wall Street solid navy / gold */
+  button, .button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: var(--ink);
+    color: #fff;
+    border: 1px solid var(--ink);
+    border-radius: 3px;
+    padding: 12px 24px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    transition: all 0.15s;
+    font-family: inherit;
+    letter-spacing: 0.02em;
+  }
+  button:hover, .button:hover {
+    background: #122a52;
+    border-color: #122a52;
+    color: var(--gold-2);
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.ghost, .button.ghost {
+    background: transparent; color: var(--ink); border-color: var(--rule);
+  }
+  button.ghost:hover, .button.ghost:hover { background: var(--paper-edge); color: var(--ink); border-color: var(--gold); }
+  button.gold, .button.gold { background: var(--gold); border-color: var(--gold); color: var(--ink); }
+  button.gold:hover, .button.gold:hover { background: #927032; border-color: #927032; color: #fff; }
+  .submit-row { display: flex; gap: 14px; align-items: center; margin-top: 24px; flex-wrap: wrap; }
+
+  /* Spinner */
+  .spinner {
+    display: inline-block;
+    width: 16px; height: 16px;
+    border: 2px solid rgba(255,255,255,0.25);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Loading overlay */
+  .loading-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(11, 29, 59, 0.7);
+    backdrop-filter: blur(4px);
+    z-index: 100;
+    align-items: center; justify-content: center;
+  }
+  .loading-overlay.visible { display: flex; }
+  .loading-card {
+    background: var(--paper);
+    padding: 32px 40px;
+    border-radius: 4px;
+    border-top: 3px solid var(--gold);
+    box-shadow: 0 32px 80px rgba(11, 29, 59, 0.3);
+    text-align: center;
+    max-width: 400px;
+  }
+  .loading-card .spinner.big {
+    width: 36px; height: 36px;
+    border-width: 3px;
+    border-color: rgba(11, 29, 59, 0.12);
+    border-top-color: var(--ink);
+    margin: 0 auto 16px;
+  }
+  .loading-card .msg {
+    font-family: "Frank Ruhl Libre", Georgia, serif;
+    font-weight: 700;
+    font-size: 18px;
+    color: var(--ink);
+    margin-bottom: 6px;
+  }
+  .loading-card .sub { font-size: 13px; color: var(--muted); }
+
+  /* Alerts */
+  .alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 18px;
+    border-radius: 3px;
+    margin-bottom: 16px;
+    font-size: 14px;
+    line-height: 1.55;
+    border-inline-start: 4px solid var(--rule);
+  }
+  .alert .alert-icon { flex-shrink: 0; width: 20px; height: 20px; margin-top: 1px; }
+  .alert.err { background: var(--err-bg); border-inline-start-color: var(--err); color: #6b1818; }
+  .alert.warn { background: var(--warn-bg); border-inline-start-color: var(--warn); color: #6b4513; }
+  .alert.ok { background: var(--ok-bg); border-inline-start-color: var(--ok); color: #134d33; }
+
+  /* Tables — analyst-grade */
+  table { border-collapse: collapse; width: 100%; margin-top: 16px; font-size: 14px; }
+  thead th {
+    background: var(--ink);
+    color: var(--gold-2);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 12px 14px;
+    text-align: start;
+    border-bottom: 2px solid var(--gold);
+  }
+  tbody td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--rule-2);
+    vertical-align: top;
+  }
+  tbody tr:hover { background: var(--paper-edge); }
+  td.num, th.num { font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: embed; text-align: start; }
+
+  /* Status badges */
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 2px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    border: 1px solid;
+  }
+  .badge.ok { background: var(--ok-bg); color: var(--ok); border-color: #b8d8c0; }
+  .badge.warn { background: var(--warn-bg); color: var(--warn); border-color: #e5cf9b; }
+  .badge.err { background: var(--err-bg); color: var(--err); border-color: #e8b8b3; }
+  .badge.muted { background: var(--paper-edge); color: var(--muted); border-color: var(--rule); }
+
+  /* Stats grid */
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0; margin-top: 18px; border: 1px solid var(--rule); }
+  .stat {
+    background: var(--paper);
+    padding: 18px 22px;
+    border-inline-end: 1px solid var(--rule);
+  }
+  .stat:last-child { border-inline-end: 0; }
+  .stat .n {
+    font-family: "Frank Ruhl Libre", Georgia, serif;
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--ink);
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat .n.gold { color: var(--gold); }
+  .stat .label {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-top: 6px;
+    font-weight: 600;
+  }
+
+  /* Select */
+  select.select {
+    width: 100%;
+    max-width: 360px;
+    padding: 11px 14px;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    background: var(--paper);
+    font-size: 14px;
+    color: var(--ink);
+    cursor: pointer;
+    font-family: inherit;
+  }
+  select.select:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold-soft); }
+
+  /* Misc */
+  pre { background: #0b1d3b; color: #f3e9d2; padding: 14px; border-radius: 3px; overflow-x: auto; font-size: 12px; line-height: 1.5; direction: ltr; text-align: start; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 6px 0; user-select: none; }
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 24px 0; }
+  hr.gold { border-top: 2px solid var(--gold); width: 60px; margin: 16px 0; }
+  .downloads { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+  .footer {
+    text-align: center;
+    color: var(--muted-2);
+    font-size: 12px;
+    margin: 48px 0 8px;
+    border-top: 1px solid var(--rule);
+    padding-top: 18px;
+  }
+  .footer .firm {
+    font-family: "Frank Ruhl Libre", Georgia, serif;
+    color: var(--ink);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-size: 11px;
+    margin-bottom: 4px;
+  }
+  .footer a { color: var(--muted); }
+
+  /* Right-to-left + LTR helpers */
+  .ltr { direction: ltr; unicode-bidi: embed; text-align: start; }
+
+  /* Mobile */
+  @media (max-width: 720px) {
+    header .wrap { padding: 14px 16px; flex-wrap: wrap; gap: 10px; }
+    header nav { width: 100%; overflow-x: auto; }
+    main { padding: 24px 16px 48px; }
+    .card { padding: 22px 20px; }
+    h2 { font-size: 22px; }
+    .summary { grid-template-columns: 1fr 1fr; }
+    .stat:nth-child(odd) { border-inline-end: 1px solid var(--rule); }
+    .stat { border-bottom: 1px solid var(--rule); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a href="{{ url_for('index') }}" class="brand">
+      <span class="name">מערכת התאמת חשבוניות</span>
+      <span class="sub">Invoice Reconciliation</span>
+    </a>
+    <nav>
+      <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">מיון לפי טבלה</a>
+      <a href="{{ url_for('batch') }}" class="{% if request.endpoint == 'batch' %}active{% endif %}">איחוד אצווה</a>
+      <a href="{{ url_for('test_page') }}" class="{% if request.endpoint == 'test_page' %}active{% endif %}">בדיקה בודדת</a>
+      <a href="{{ url_for('list_runs') }}" class="{% if request.endpoint in ('list_runs', 'view_results') %}active{% endif %}">היסטוריה</a>
+    </nav>
+  </div>
+</header>
+<main>
+  {% if api_key_missing %}
+  <div class="alert err">
+    <svg class="alert-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+    <div><strong>מפתח ANTHROPIC_API_KEY אינו מוגדר.</strong> סגור את השרת, הגדר את משתנה הסביבה והפעל מחדש.</div>
+  </div>
+  {% endif %}
+  {% block content %}{% endblock %}
+  <div class="footer">
+    <div class="firm">מערכת התאמת חשבוניות · Invoice Reconciliation</div>
+    <div>קבצי הפלט נשמרים תחת <code>web_outputs/</code></div>
+  </div>
+</main>
+
+<div class="loading-overlay" id="loading">
+  <div class="loading-card">
+    <div class="spinner big"></div>
+    <div class="msg">מעבד נתונים…</div>
+    <div class="sub">המערכת קוראת כל חשבונית. זמן משוער: 5–10 שניות לעמוד. נא לא לסגור את החלון.</div>
+  </div>
+</div>
+
+<script>
+  function wireDrop(dropEl, input, listEl, multiple) {
+    const updateList = () => {
+      if (!listEl) return;
+      listEl.innerHTML = '';
+      const files = Array.from(input.files || []);
+      if (!files.length) return;
+      files.forEach((f, i) => {
+        const row = document.createElement('div');
+        row.className = 'file-row';
+        row.innerHTML = `
+          <span>📄</span>
+          <span class="name">${f.name}</span>
+          <span class="size">${(f.size/1024).toFixed(0)} KB</span>
+          ${multiple ? '<button type="button" class="remove" aria-label="הסר">×</button>' : ''}
+        `;
+        if (multiple) {
+          row.querySelector('.remove').onclick = () => {
+            const dt = new DataTransfer();
+            Array.from(input.files).forEach((file, j) => { if (j !== i) dt.items.add(file); });
+            input.files = dt.files;
+            updateList();
+          };
+        }
+        listEl.appendChild(row);
+      });
+    };
+    input.addEventListener('change', updateList);
+    ['dragenter','dragover'].forEach(ev => dropEl.addEventListener(ev, e => { e.preventDefault(); dropEl.classList.add('dragging'); }));
+    ['dragleave','drop'].forEach(ev => dropEl.addEventListener(ev, e => { e.preventDefault(); dropEl.classList.remove('dragging'); }));
+    dropEl.addEventListener('drop', e => {
+      const dt = new DataTransfer();
+      if (multiple) { Array.from(input.files || []).forEach(f => dt.items.add(f)); }
+      Array.from(e.dataTransfer.files).forEach(f => dt.items.add(f));
+      input.files = dt.files;
+      updateList();
+    });
+  }
+  function wireSubmit(form, loadingMsg) {
+    form.addEventListener('submit', () => {
+      document.getElementById('loading').classList.add('visible');
+      if (loadingMsg) document.querySelector('#loading .msg').textContent = loadingMsg;
+      Array.from(form.querySelectorAll('button[type=submit]')).forEach(b => b.disabled = true);
+    });
+  }
+</script>
+{% block extra_scripts %}{% endblock %}
+</body>
+</html>

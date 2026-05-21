@@ -1,0 +1,98 @@
+# =============================================================================
+# Sensitive data — NEVER commit these
+# =============================================================================
+# Anthropic API key (set as env var; never put in code)
+.env
+.env.*
+*.env
+ANTHROPIC_API_KEY
+
+# Real customer / financial PDFs — these may contain sensitive business data
+*.pdf
+!samples/example_*.pdf
+
+# Real customer receipt photos / scans
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.heic
+*.tif
+*.tiff
+*.bmp
+!samples/example_*.jpg
+!samples/example_*.png
+
+# Generated job folders (contain processed user data)
+web_outputs/
+full_run_output/
+
+# Real customer CSVs
+*.csv
+!samples/example_*.csv
+
+# CFO / private photos
+static/cfo.jpg
+static/*.jpg
+static/*.jpeg
+static/*.png
+!static/logo.svg
+!static/.gitkeep
+
+# =============================================================================
+# Python
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual envs
+.venv/
+venv/
+ENV/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# =============================================================================
+# IDE / OS
+# =============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =============================================================================
+# Local working files
+# =============================================================================
+# Throwaway scripts (any file starting with _)
+_*.py
+_*.json
+_*.csv
+
+# Plans / scratch
+plans/
+*.tmp
+*.bak

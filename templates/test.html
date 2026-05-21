@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}בדיקה בודדת · התאמת חשבוניות{% endblock %}
+{% block content %}
+
+<div class="card hero">
+  <div class="eyebrow">בקרת איכות</div>
+  <h2>בדיקה של חשבונית בודדת</h2>
+  <hr class="gold">
+  <p class="lead">
+    מסך זה מאפשר לבחון את החילוץ על חשבונית אחת ולקבל את השדות (ספק · סכום · תאריך · מס׳ עוסק) לצד הורדה ב־CSV.
+    שימושי לאימות הדיוק לפני הרצה של אצווה גדולה.
+  </p>
+
+  <form method="post" enctype="multipart/form-data" id="test-form">
+    <label>קובץ חשבונית</label>
+    <div class="drop" id="drop-test">
+      <input id="invoice" name="invoice" type="file"
+             accept=".pdf,image/png,image/jpeg,image/webp,image/gif" required>
+      <div class="icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5-5 5 5M12 5v12"/></svg>
+      </div>
+      <div class="title">גרור לכאן חשבונית</div>
+      <div class="hint">PDF · PNG · JPG · WebP · GIF · גם צילומים הפוכים נקראים בהצלחה</div>
+    </div>
+    <div class="files" id="files-test"></div>
+    <div id="thumb-wrap" style="display:none; margin-top: 18px;">
+      <img id="thumb" alt="תצוגה מקדימה" style="max-width: 260px; max-height: 260px; border: 1px solid var(--rule); padding: 6px; background: var(--paper);">
+    </div>
+
+    <div class="submit-row">
+      <button type="submit">חלץ שדות ←</button>
+      <span class="muted">החילוץ אורך 5–10 שניות.</span>
+    </div>
+  </form>
+</div>
+
+{% if result_fields %}
+<div class="card">
+  <div class="eyebrow">פלט</div>
+  <h2>השדות שחולצו</h2>
+  <hr class="gold">
+  <p class="muted">מתוך הקובץ <code>{{ original_name }}</code></p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ספק</th>
+        <th class="num">סכום</th>
+        <th class="num">תאריך</th>
+        <th class="num">מס׳ עוסק</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td dir="auto">{{ result_fields.supplier if result_fields.supplier is not none else '<span class="badge muted">חסר</span>'|safe }}</td>
+        <td class="num">{{ result_fields.amount if result_fields.amount is not none else '<span class="badge muted">חסר</span>'|safe }}</td>
+        <td class="num">{{ result_fields.date if result_fields.date is not none else '<span class="badge muted">חסר</span>'|safe }}</td>
+        <td class="num">{{ result_fields.id_number if result_fields.id_number is not none else '<span class="badge muted">חסר</span>'|safe }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="downloads">
+    <a class="button gold" href="{{ url_for('download', job=job, filename=csv_filename) }}">⬇ הורד CSV</a>
+  </div>
+  <p class="muted" style="margin-top: 12px">נשמר גם בנתיב <code>web_outputs/{{ job }}/{{ csv_filename }}</code></p>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  wireDrop(document.getElementById('drop-test'), document.getElementById('invoice'), document.getElementById('files-test'), false);
+  document.getElementById('invoice').addEventListener('change', e => {
+    const file = e.target.files[0];
+    const wrap = document.getElementById('thumb-wrap');
+    const img = document.getElementById('thumb');
+    if (file && file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = ev => { img.src = ev.target.result; wrap.style.display = 'block'; };
+      reader.readAsDataURL(file);
+    } else {
+      wrap.style.display = 'none';
+    }
+  });
+  wireSubmit(document.getElementById('test-form'), 'קורא חשבונית…');
+</script>
+{% endblock %}

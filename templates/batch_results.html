@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}תוצאות איחוד · התאמת חשבוניות{% endblock %}
+{% block content %}
+
+<div class="card">
+  <div class="eyebrow">תוצאה</div>
+  <h2>החשבוניות אוחדו ומוינו</h2>
+  <hr class="gold">
+  <p class="muted">תיק <code>{{ job }}</code> · ממוין לפי <strong>{{ sort_by }}</strong> · {{ count }} חשבוניות</p>
+
+  <div class="alert ok">
+    <svg class="alert-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+    <div>כל {{ count }} החשבוניות חולצו ואוחדו לקובץ PDF אחד.</div>
+  </div>
+
+  <div class="downloads">
+    <a class="button gold" href="{{ url_for('download', job=job, filename=combined_pdf) }}">⬇ קובץ ה־PDF הממוין</a>
+    <a class="button ghost" href="{{ url_for('download', job=job, filename=csv_filename) }}">⬇ הורד CSV של השדות</a>
+  </div>
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0">סדר החשבוניות בקובץ</h3>
+  <p class="muted">הקובץ המאוחד שלמעלה מסודר באותו הסדר.</p>
+  <table>
+    <thead>
+      <tr>
+        <th class="num">#</th>
+        <th>קובץ מקור</th>
+        <th>ספק</th>
+        <th class="num">סכום</th>
+        <th class="num">תאריך</th>
+        <th class="num">מס׳ עוסק</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="num muted">{{ loop.index }}</td>
+        <td><code>{{ r.filename }}</code></td>
+        <td dir="auto">{{ r.supplier if r.supplier else '<span class="badge muted">—</span>'|safe }}</td>
+        <td class="num">{{ r.amount if r.amount is not none else '—' }}</td>
+        <td class="num">{{ r.date if r.date is not none else '—' }}</td>
+        <td class="num">{{ r.id_number if r.id_number else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<p><a href="{{ url_for('batch') }}">← בצע איחוד נוסף</a></p>
+{% endblock %}

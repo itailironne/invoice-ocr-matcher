@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}איחוד אצווה · התאמת חשבוניות{% endblock %}
+{% block content %}
+
+<div class="card hero">
+  <div class="eyebrow">איחוד · מיון · ארכוב</div>
+  <h2>איחוד חשבוניות בודדות לקובץ PDF אחד ממוין</h2>
+  <hr class="gold">
+  <p class="lead">
+    העלה ערימה של חשבוניות בודדות — שילוב חופשי של PDF־ים וצילומים מהטלפון. המערכת קוראת כל אחת,
+    ממיינת אותן לפי השדה שתבחר, ומחזירה <strong>קובץ PDF אחד</strong> עם כולן בסדר הנכון, וכן CSV של השדות שחולצו.
+  </p>
+
+  <form method="post" enctype="multipart/form-data" id="batch-form">
+    <label>החשבוניות (חשבונית אחת לקובץ — PDF או תמונה)</label>
+    <div class="drop" id="drop-batch">
+      <input id="invoices" name="invoices" type="file"
+             accept=".pdf,image/png,image/jpeg,image/webp,image/gif"
+             multiple required>
+      <div class="icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5-5 5 5M12 5v12"/></svg>
+      </div>
+      <div class="title">גרור לכאן מספר חשבוניות</div>
+      <div class="hint">PDF · PNG · JPG · WebP · GIF · ניתן להוסיף עוד בגרירה חוזרת</div>
+    </div>
+    <div class="files" id="files-batch"></div>
+
+    <label for="sort_by" style="margin-top: 26px">מיין את הקובץ הסופי לפי</label>
+    <select name="sort_by" id="sort_by" class="select">
+      <option value="date" selected>תאריך (ישן ראשון)</option>
+      <option value="supplier">ספק (א—ת)</option>
+      <option value="amount">סכום (נמוך ראשון)</option>
+      <option value="id_number">מספר עוסק</option>
+    </select>
+    <p class="muted" style="margin-top: 6px">חשבוניות שבהן לא הצליחה המערכת לקרוא את השדה הנבחר יופיעו בסוף, בסדר ההעלאה.</p>
+
+    <div class="submit-row">
+      <button type="submit">חלץ ואחד ←</button>
+      <span class="muted">כל חשבונית אורכת 5–10 שניות · נא לא לסגור את החלון.</span>
+    </div>
+  </form>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  wireDrop(document.getElementById('drop-batch'), document.getElementById('invoices'), document.getElementById('files-batch'), true);
+  wireSubmit(document.getElementById('batch-form'), 'קורא חשבוניות…');
+</script>
+{% endblock %}

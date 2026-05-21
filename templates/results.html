@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}תוצאות · התאמת חשבוניות{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="eyebrow">סיכום הרצה</div>
+  <h2>ההתאמה הושלמה</h2>
+  <hr class="gold">
+  <p class="muted">תיק <code>{{ job }}</code> · קבצי הפלט תחת <code>web_outputs/{{ job }}/</code></p>
+
+  <div class="summary">
+    <div class="stat"><div class="n">{{ summary.rows }}</div><div class="label">שורות בטבלה</div></div>
+    <div class="stat"><div class="n">{{ summary.pages }}</div><div class="label">עמודים סרוקים</div></div>
+    <div class="stat"><div class="n gold">{{ summary.matched }}</div><div class="label">הותאמו</div></div>
+    <div class="stat"><div class="n" style="color: var(--warn);">{{ summary.low_confidence }}</div><div class="label">ביטחון נמוך</div></div>
+    <div class="stat"><div class="n" style="color: var(--err);">{{ summary.unmatched }}</div><div class="label">לא הותאמו</div></div>
+  </div>
+
+  {% if summary.unmatched or summary.low_confidence %}
+  <div class="alert warn" style="margin-top: 22px">
+    <svg class="alert-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
+    <div>חלק מהשורות לא הותאמו באופן ברור. פתח את הקובץ <code>match_report.csv</code> ובדוק שורות בסטטוס <span class="badge warn">low_confidence</span> או <span class="badge err">unmatched</span>.</div>
+  </div>
+  {% else %}
+  <div class="alert ok" style="margin-top: 22px">
+    <svg class="alert-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+    <div>כל שורות הטבלה הותאמו לעמודי הסריקה בהצלחה.</div>
+  </div>
+  {% endif %}
+
+  <h3>קבצים להורדה</h3>
+  <div class="downloads">
+    {% if out_pdf %}<a class="button gold" href="{{ url_for('download', job=job, filename=out_pdf) }}">⬇ קובץ ה־PDF הממוין</a>{% endif %}
+    <a class="button ghost" href="{{ url_for('download', job=job, filename=out_csv) }}">⬇ דוח התאמה (CSV)</a>
+    {% if extracted_csv %}<a class="button ghost" href="{{ url_for('download', job=job, filename=extracted_csv) }}">⬇ שדות מהסריקות (CSV)</a>{% endif %}
+    {% if table_csv %}<a class="button ghost" href="{{ url_for('download', job=job, filename=table_csv) }}">⬇ שדות מהטבלה (CSV)</a>{% endif %}
+  </div>
+</div>
+
+{% if report_rows %}
+<div class="card">
+  <div class="eyebrow">תצוגה מקדימה</div>
+  <h3 style="margin-top:0">{{ '50 השורות הראשונות מ־match_report' if report_rows|length == 50 else 'דוח ההתאמה המלא' }}</h3>
+  <hr class="gold">
+  <table>
+    <thead>
+      <tr>
+        <th class="num">עמוד ב־PDF</th>
+        <th>ספק (סריקה)</th>
+        <th class="num">סכום סריקה</th>
+        <th>ספק (טבלה)</th>
+        <th class="num">סכום טבלה (פני מע״מ)</th>
+        <th class="num">סכום טבלה (כולל מע״מ)</th>
+        <th class="num">תאריך</th>
+        <th class="num">ציון</th>
+        <th>סטטוס</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in report_rows %}
+      <tr>
+        <td class="num">{{ r.output_page or loop.index }}</td>
+        <td dir="auto">{{ r.scan_supplier or r.supplier or '—' }}</td>
+        <td class="num">{{ r.scan_amount or '—' }}</td>
+        <td dir="auto">{{ r.table_supplier or r.supplier or '—' }}</td>
+        <td class="num">{{ r.table_amount_pre_vat or r.amount or '—' }}</td>
+        <td class="num">{{ r.table_amount_with_vat or '—' }}</td>
+        <td class="num">{{ r.table_date or r.date or '—' }}</td>
+        <td class="num">{{ r.match_score }}</td>
+        <td>
+          {% if r.status == 'matched' %}<span class="badge ok">הותאם</span>
+          {% elif r.status == 'low_confidence' %}<span class="badge warn">ביטחון נמוך</span>
+          {% elif r.status == 'leftover' %}<span class="badge muted">שארית</span>
+          {% else %}<span class="badge err">לא הותאם</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<p><a href="{{ url_for('index') }}">← בצע הרצה נוספת</a> · <a href="{{ url_for('list_runs') }}">היסטוריית הרצות</a></p>
+{% endblock %}

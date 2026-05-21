@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}שגיאה · התאמת חשבוניות{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="eyebrow">תקלה</div>
+  <h2>אירעה שגיאה</h2>
+  <hr class="gold">
+  <div class="alert err">
+    <svg class="alert-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clip-rule="evenodd"/></svg>
+    <div dir="auto">{{ message }}</div>
+  </div>
+  {% if trace %}
+  <details>
+    <summary>פרטי מעקב (לחץ להצגה)</summary>
+    <pre>{{ trace }}</pre>
+  </details>
+  {% endif %}
+  <p style="margin-top: 18px"><a href="{{ url_for('index') }}">← חזרה לעמוד הראשי</a></p>
+</div>
+{% endblock %}

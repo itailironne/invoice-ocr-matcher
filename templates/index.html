@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}מיון לפי טבלה · התאמת חשבוניות{% endblock %}
+{% block content %}
+
+<div class="card hero">
+  <div class="eyebrow">התאמת חשבוניות</div>
+  <h2>התאמת חשבוניות סרוקות לטבלת ספקים</h2>
+  <hr class="gold">
+  <p class="lead">
+    העלה את טבלת החשבוניות לצד החשבוניות הסרוקות. הבינה המלאכותית של Claude קוראת כל סריקה,
+    ממיינת אותן לסדר הטבלה ומחזירה PDF ממוין יחד עם דוח התאמה ב־CSV.
+  </p>
+
+  <form action="{{ url_for('reorder') }}" method="post" enctype="multipart/form-data" id="reorder-form">
+    <label for="table_pdf"><span class="step">1</span>קובץ הטבלה — רשימת החשבוניות (ספק · סכום · תאריך · ע.מ.)</label>
+    <div class="drop" id="drop-table">
+      <input id="table_pdf" name="table_pdf" type="file" accept="application/pdf" required>
+      <div class="icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5-5 5 5M12 5v12"/></svg>
+      </div>
+      <div class="title">גרור לכאן את קובץ הטבלה</div>
+      <div class="hint">או לחץ לבחירה · קובץ PDF בלבד</div>
+    </div>
+    <div class="files" id="files-table"></div>
+
+    <label for="scanned_pdf" style="margin-top: 26px"><span class="step">2</span>קובץ החשבוניות הסרוקות (עמוד אחד לכל חשבונית, בכל סדר)</label>
+    <div class="drop" id="drop-scanned">
+      <input id="scanned_pdf" name="scanned_pdf" type="file" accept="application/pdf" required>
+      <div class="icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5-5 5 5M12 5v12"/></svg>
+      </div>
+      <div class="title">גרור לכאן את קובץ הסריקות</div>
+      <div class="hint">או לחץ לבחירה · קובץ PDF בלבד</div>
+    </div>
+    <div class="files" id="files-scanned"></div>
+
+    <div class="optional-row">
+      <div class="opt-field">
+        <label for="max_pages">מספר עמודים לעיבוד (אופציונלי)</label>
+        <input type="number" name="max_pages" id="max_pages" min="1" max="500" placeholder="ריק = כל העמודים" class="num-input">
+        <p class="muted" style="margin-top: 6px">הזן מספר אם ברצונך לעבד רק את N העמודים הראשונים — שימושי לבדיקה זריזה.</p>
+      </div>
+      <div class="opt-field">
+        <label for="vat_rate">שיעור מע״מ (%)</label>
+        <input type="number" name="vat_rate" id="vat_rate" min="0" max="50" step="0.01" placeholder="18" class="num-input">
+        <p class="muted" style="margin-top: 6px">ברירת מחדל 18% — חשבוניות הסריקה כוללות מע״מ ואילו הטבלה לפני מע״מ. עדכן אם השיעור השתנה.</p>
+      </div>
+    </div>
+
+    <style>
+      .optional-row { display: flex; gap: 24px; margin-top: 26px; flex-wrap: wrap; }
+      .opt-field { flex: 1; min-width: 220px; }
+      .opt-field label { margin-top: 0; }
+    </style>
+
+    <div class="submit-row">
+      <button type="submit">מיין וחלץ ←</button>
+      <span class="muted">החילוץ אורך 5–10 שניות לכל עמוד · נא לא לסגור את החלון.</span>
+    </div>
+  </form>
+
+  <style>
+    .num-input {
+      width: 200px;
+      padding: 11px 14px;
+      border: 1px solid var(--rule);
+      border-radius: 3px;
+      background: var(--paper);
+      font-size: 14px;
+      color: var(--ink);
+      font-family: inherit;
+      direction: ltr;
+      text-align: start;
+    }
+    .num-input:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold-soft); }
+  </style>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  wireDrop(document.getElementById('drop-table'),   document.getElementById('table_pdf'),   document.getElementById('files-table'),   false);
+  wireDrop(document.getElementById('drop-scanned'), document.getElementById('scanned_pdf'), document.getElementById('files-scanned'), false);
+  wireSubmit(document.getElementById('reorder-form'), 'ממיין חשבוניות…');
+</script>
+{% endblock %}
