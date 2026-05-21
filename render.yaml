@@ -1,0 +1,41 @@
+# Render Blueprint — auto-deploys when pushed to GitHub.
+# Docs: https://render.com/docs/blueprint-spec
+#
+# To deploy:
+#   1. Sign up at https://render.com (use the GitHub button — connects your repo automatically)
+#   2. Dashboard → "New +" → "Blueprint"
+#   3. Pick the invoice-reorder repo and click "Apply"
+#   4. Set ANTHROPIC_API_KEY in the env-vars section (Render won't run without it)
+#
+# Free tier caveats:
+#   - Service spins down after 15 min of inactivity (~30 sec cold start)
+#   - Filesystem is ephemeral (web_outputs/ is wiped on restart)
+#   - 512 MB RAM, 0.1 CPU — fine for ≤30-page runs, may OOM on very large batches
+#
+services:
+  - type: web
+    name: invoice-reorder
+    runtime: python
+    plan: free
+    region: oregon
+    branch: main
+
+    # Render auto-detects requirements.txt; explicit build command for clarity.
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+
+    # Gunicorn with a single worker (free tier RAM doesn't fit more) and a long
+    # request timeout so multi-page Claude vision runs don't get killed.
+    # --timeout 0 disables the worker timeout (safe with one worker, single-threaded).
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 0 --access-logfile -
+
+    envVars:
+      # Set this in the Render dashboard — DO NOT put the key here.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: PYTHONIOENCODING
+        value: utf-8
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
+    autoDeploy: true   # push to main = redeploy
+    healthCheckPath: /

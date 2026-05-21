@@ -354,21 +354,24 @@ def too_large(e):
 
 
 def main():
+    """Local development entry point. In production (Render / any host), use
+    a WSGI server like gunicorn that imports `app:app` directly — see
+    render.yaml for the production command."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print("WARNING: ANTHROPIC_API_KEY is not set. The app will start but every extraction will fail until you set it.", file=sys.stderr)
+    port = int(os.environ.get("PORT", 5000))
+    host = os.environ.get("HOST", "127.0.0.1")
     banner = (
         "\n"
         "============================================================\n"
         "  Invoice Reorder web app\n"
-        "  Open in your browser:\n"
-        "    Reorder two PDFs:      http://127.0.0.1:5000/\n"
-        "    Single-invoice test:   http://127.0.0.1:5000/test\n"
-        f"  Outputs land under:     {JOBS_DIR}\n"
-        "  Stop the server:        Ctrl+C\n"
+        f"  Open in your browser:    http://{host}:{port}/\n"
+        f"  Outputs land under:      {JOBS_DIR}\n"
+        "  Stop the server:         Ctrl+C\n"
         "============================================================\n"
     )
     print(banner)
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    app.run(host=host, port=port, debug=False)
 
 
 if __name__ == "__main__":
