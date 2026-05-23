@@ -19,7 +19,7 @@ The app is built with Python + Flask. You run it locally on your computer — no
 - **Windows 10 or 11** (the guide below is for Windows)
 - **Python 3.10 or newer** — download from https://www.python.org/downloads/ (check "Add Python to PATH" during install)
 - **Git** — download from https://git-scm.com/download/win
-- **An Anthropic API key** — the person who shared this guide with you will give you one, or you can create one at https://console.anthropic.com
+- **An Anthropic API key** — create a free account at https://console.anthropic.com, then go to API Keys and create a new key. Each run costs roughly $0.50–$2 depending on how many pages you process.
 
 ---
 
@@ -78,16 +78,35 @@ Open your browser and go to **http://localhost:5000**
 
 ---
 
-## Step 5 — Using the app
+## Step 5 — Preparing your files
+
+You need two PDF files:
+
+### File 1 — The table PDF (קובץ הטבלה)
+This is a Hebrew **הוראת תשלום** (payment order) document — typically exported from your accounting software as a PDF.
+It must contain a table with these columns (Hebrew headers):
+- **ספק / תיאור / שם הספק** — supplier / payee name
+- **מחיר / סכום / סה"כ** — amount (numbers only, no currency symbol needed)
+- **עבור תאריך / תאריך** — date
+- **עוסק מורשה / ח.פ / ע.מ** — Israeli business ID (optional but improves matching)
+
+The app reads each row from this table and uses it as the expected list of invoices to match against.
+
+### File 2 — The scanned invoices PDF (קובץ החשבוניות הסרוקות)
+A scanned PDF where **each page is one invoice**. The invoices can be in any order — the app will reorder them to match the table. Scan quality should be reasonable (not blurry).
+
+---
+
+## Step 6 — Using the app
 
 The main page ("מיון לפי טבלה") has two upload zones:
 
-1. **קובץ הטבלה** — the invoice table PDF (list of expected invoices: supplier, amount, date, VAT number)
-2. **קובץ החשבוניות הסרוקות** — the scanned invoices PDF (one invoice per page, in any order)
+1. **קובץ הטבלה** — upload the payment order PDF
+2. **קובץ החשבוניות הסרוקות** — upload the scanned invoices PDF
 
 You can drag files onto the zones, or click to browse.
 
-Then click **מיין וחלץ** (Sort & Extract).
+Then click **מיין וחלץ ←** (Sort & Extract).
 
 A progress page will appear showing a progress bar and elapsed time. Do not close the window.
 
