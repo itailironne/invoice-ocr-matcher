@@ -106,6 +106,10 @@ The main page ("מיון לפי טבלה") has two upload zones:
 
 You can drag files onto the zones, or click to browse.
 
+There are also two optional fields below the upload zones:
+- **מספר עמודים לעיבוד** — leave empty to process all pages. Enter a number (e.g. `10`) if you only want to test with the first few pages.
+- **שיעור מע״מ (%)** — VAT rate. Default is **18** (Israel's current rate). If the VAT rate changes in the future, update this field accordingly (enter the percentage as a number, e.g. `17` or `18`).
+
 Then click **מיין וחלץ ←** (Sort & Extract).
 
 A progress page will appear showing a progress bar and elapsed time. Do not close the window.
