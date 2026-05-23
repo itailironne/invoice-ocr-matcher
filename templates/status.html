@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}מעבד חשבוניות… · התאמת חשבוניות{% endblock %}
+{% block content %}
+
+<div class="card hero" style="text-align:center; max-width: 560px; margin: 60px auto;">
+  <div class="eyebrow">עיבוד בתהליך</div>
+  <h2 id="status-title">קורא חשבוניות…</h2>
+  <hr class="gold" style="margin: 16px auto;">
+  <p class="lead" id="status-msg">המערכת קוראת כל חשבונית ומתאימה אותה לטבלה. נא לא לסגור את החלון.</p>
+
+  <div style="margin: 28px 0 8px;">
+    <div class="progress-wrap" style="height:10px; background:var(--primary-soft); border-radius:999px; overflow:hidden;">
+      <div class="progress-fill" id="prog-fill" style="width:0%; background:var(--primary); height:100%; border-radius:999px; transition:width 0.9s ease;"></div>
+    </div>
+    <div style="display:flex; justify-content:space-between; margin-top:8px; font-size:13px; color:var(--muted); font-variant-numeric:tabular-nums;">
+      <span id="prog-pct">0%</span>
+      <span id="elapsed">00:00</span>
+    </div>
+  </div>
+
+  <p class="muted">זמן משוער: 5–10 שניות לכל עמוד. עמודים רבים עלולים לקחת מספר דקות.</p>
+
+  <div id="error-box" style="display:none;" class="alert err" style="margin-top:20px; text-align:start;">
+    <svg class="alert-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+    <div id="error-msg"></div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const job = {{ job | tojson }};
+  const fill = document.getElementById('prog-fill');
+  const pctEl = document.getElementById('prog-pct');
+  const elapsedEl = document.getElementById('elapsed');
+  const titleEl = document.getElementById('status-title');
+  const msgEl = document.getElementById('status-msg');
+  const errBox = document.getElementById('error-box');
+  const errMsg = document.getElementById('error-msg');
+
+  let elapsed = 0;
+  let displayPct = 0;
+
+  // Elapsed timer
+  setInterval(() => {
+    elapsed++;
+    const m = String(Math.floor(elapsed / 60)).padStart(2, '0');
+    const s = String(elapsed % 60).padStart(2, '0');
+    elapsedEl.textContent = m + ':' + s;
+
+    // Fake logarithmic progress capped at 88% until server says done
+    displayPct = Math.min(displayPct + (88 - displayPct) / 30, 88);
+    fill.style.width = displayPct.toFixed(1) + '%';
+    pctEl.textContent = Math.round(displayPct) + '%';
+  }, 1000);
+
+  // Poll for real status
+  function poll() {
+    fetch('/progress/' + job + '.json')
+      .then(r => r.json())
+      .then(data => {
+        if (data.status === 'done') {
+          fill.style.width = '100%';
+          pctEl.textContent = '100%';
+          titleEl.textContent = 'הושלם! מעביר לתוצאות…';
+          msgEl.textContent = '';
+          setTimeout(() => { window.location.href = '/results/' + job; }, 600);
+        } else if (data.status === 'error') {
+          titleEl.textContent = 'שגיאה בעיבוד';
+          msgEl.textContent = '';
+          errBox.style.display = 'flex';
+          errMsg.textContent = data.msg || 'שגיאה לא ידועה';
+        } else {
+          if (data.msg) msgEl.textContent = data.msg;
+          setTimeout(poll, 3000);
+        }
+      })
+      .catch(() => setTimeout(poll, 5000));
+  }
+
+  setTimeout(poll, 2000);
+})();
+</script>
+{% endblock %}

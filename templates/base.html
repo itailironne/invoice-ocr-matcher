@@ -225,7 +225,7 @@
   }
   .drop:hover { border-color: var(--primary); background: var(--primary-soft); transform: translateY(-1px); }
   .drop.dragging { border-color: var(--primary); border-style: solid; background: var(--primary-soft); transform: scale(1.01); }
-  .drop input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .drop input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; z-index: 1; }
   .drop .icon {
     width: 52px; height: 52px;
     margin: 0 auto 14px;
@@ -348,6 +348,26 @@
     margin-bottom: 6px;
   }
   .loading-card .sub { font-size: 13px; color: var(--muted); }
+  .progress-wrap {
+    background: var(--primary-soft);
+    border-radius: 999px;
+    height: 6px;
+    margin: 18px 0 8px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    background: var(--primary);
+    height: 100%;
+    width: 0%;
+    border-radius: 999px;
+    transition: width 1s ease;
+  }
+  .elapsed {
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    margin-top: 4px;
+  }
 
   /* Alerts — softer, rounded, like monday cards */
   .alert {
@@ -536,6 +556,8 @@
     <div class="spinner big"></div>
     <div class="msg">מעבד נתונים…</div>
     <div class="sub">המערכת קוראת כל חשבונית. זמן משוער: 5–10 שניות לעמוד. נא לא לסגור את החלון.</div>
+    <div class="progress-wrap"><div class="progress-fill" id="progress-fill"></div></div>
+    <div class="elapsed" id="elapsed-timer">00:00</div>
   </div>
 </div>
 
@@ -582,7 +604,23 @@
       document.getElementById('loading').classList.add('visible');
       if (loadingMsg) document.querySelector('#loading .msg').textContent = loadingMsg;
       Array.from(form.querySelectorAll('button[type=submit]')).forEach(b => b.disabled = true);
+      _startProgress();
     });
+  }
+  function _startProgress() {
+    const fill = document.getElementById('progress-fill');
+    const timer = document.getElementById('elapsed-timer');
+    if (!fill || !timer) return;
+    let elapsed = 0;
+    setInterval(() => {
+      elapsed++;
+      const m = String(Math.floor(elapsed / 60)).padStart(2, '0');
+      const s = String(elapsed % 60).padStart(2, '0');
+      timer.textContent = m + ':' + s;
+      // Logarithmic: reaches ~50% at 60s, ~75% at 180s, ~88% at 360s
+      const pct = 90 * (1 - Math.exp(-elapsed / 150));
+      fill.style.width = pct.toFixed(1) + '%';
+    }, 1000);
   }
 </script>
 {% block extra_scripts %}{% endblock %}

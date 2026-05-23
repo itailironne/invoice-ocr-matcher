@@ -15,11 +15,14 @@ Run with:
 from __future__ import annotations
 
 import csv
+import json as _json
 import logging
 import os
 import re
 import secrets
 import sys
+import threading
+import time as _time
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -62,6 +65,21 @@ def _new_job_dir() -> Path:
 
 def _ext_ok(filename: str, allowed: set[str]) -> bool:
     return Path(filename).suffix.lower() in allowed
+
+
+def _write_status(job_dir: Path, status: str, pct: int = 0, msg: str = "") -> None:
+    data = {"status": status, "pct": pct, "msg": msg, "ts": _time.time()}
+    (job_dir / "status.json").write_text(_json.dumps(data), encoding="utf-8")
+
+
+def _run_pipeline_bg(job_dir: Path, max_pages, vat_rate) -> None:
+    try:
+        _write_status(job_dir, "running", 2, "מתחיל עיבוד חשבוניות…")
+        ri.run(job_dir / "table.pdf", job_dir / "scanned.pdf", job_dir, max_pages=max_pages, vat_rate=vat_rate)
+        _write_status(job_dir, "done", 100, "הושלם")
+    except Exception as e:
+        log.exception("background job %s failed", job_dir.name)
+        _write_status(job_dir, "error", 0, f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}")
 
 
 @app.route("/")
@@ -107,17 +125,35 @@ def reorder():
     scanned_path = job_dir / "scanned.pdf"
     table_file.save(str(table_path))
     scanned_file.save(str(scanned_path))
-    log.info("job %s: saved uploads, starting pipeline (max_pages=%s, vat=%s)", job_dir.name, max_pages, vat_rate)
+    log.info("job %s: saved uploads, launching background pipeline (max_pages=%s, vat=%s)", job_dir.name, max_pages, vat_rate)
 
+    _write_status(job_dir, "running", 0, "הקבצים הועלו, מתחיל עיבוד…")
+    t = threading.Thread(target=_run_pipeline_bg, args=(job_dir, max_pages, vat_rate), daemon=True)
+    t.start()
+    return redirect(url_for("job_status", job=job_dir.name))
+
+
+@app.route("/status/<job>")
+def job_status(job: str):
+    job_dir = _resolve_job_dir(job)
+    if not job_dir:
+        return render_template("error.html", message=f"לא נמצאה תיקיית עבודה: {job}"), 404
+    return render_template("status.html", job=job)
+
+
+@app.route("/progress/<job>.json")
+def job_progress(job: str):
+    job_dir = _resolve_job_dir(job)
+    if not job_dir:
+        return jsonify({"status": "error", "msg": "job not found"}), 404
+    status_file = job_dir / "status.json"
+    if not status_file.exists():
+        return jsonify({"status": "running", "pct": 0, "msg": "ממתין לתחילת העיבוד…"})
     try:
-        summary = ri.run(table_path, scanned_path, job_dir, max_pages=max_pages, vat_rate=vat_rate)
-    except Exception as e:
-        log.exception("job %s failed", job_dir.name)
-        return render_template("error.html", message=f"{type(e).__name__}: {e}", trace=traceback.format_exc()), 500
-
-    # Redirect to /results/<job> so the same view that renders past runs handles this one too
-    # (single code path for the results page + run report).
-    return redirect(url_for("view_results", job=job_dir.name))
+        data = _json.loads(status_file.read_text(encoding="utf-8"))
+        return jsonify(data)
+    except Exception:
+        return jsonify({"status": "running", "pct": 0, "msg": "ממתין…"})
 
 
 @app.route("/test", methods=["GET", "POST"])
