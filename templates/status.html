@@ -20,9 +20,16 @@
 
   <p class="muted">זמן משוער: 5–10 שניות לכל עמוד. עמודים רבים עלולים לקחת מספר דקות.</p>
 
-  <div id="error-box" style="display:none;" class="alert err" style="margin-top:20px; text-align:start;">
+  <div id="error-box" style="display:none; margin-top:20px; text-align:start;" class="alert err">
     <svg class="alert-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
-    <div id="error-msg"></div>
+    <div>
+      <div id="error-msg"></div>
+      <div id="restart-hint" style="display:none; margin-top:8px; font-size:13px;">
+        השרת הופעל מחדש במהלך העיבוד (מגבלת זיכרון של Render). אנא
+        <a href="{{ url_for('index') }}">חזור והעלה שוב</a>.
+        כדי לעבד 100 עמודים בצורה אמינה, שקול לחלק את הסריקות לקובצי PDF קטנים יותר (30–40 עמודים כל אחד).
+      </div>
+    </div>
   </div>
 </div>
 
@@ -68,7 +75,9 @@
           titleEl.textContent = 'שגיאה בעיבוד';
           msgEl.textContent = '';
           errBox.style.display = 'flex';
-          errMsg.textContent = data.msg || 'שגיאה לא ידועה';
+          const isRestart = !data.msg || data.msg.includes('job not found') || data.msg.includes('not found');
+          errMsg.textContent = isRestart ? '' : (data.msg || 'שגיאה לא ידועה');
+          if (isRestart) document.getElementById('restart-hint').style.display = 'block';
         } else {
           if (data.msg) msgEl.textContent = data.msg;
           setTimeout(poll, 3000);
