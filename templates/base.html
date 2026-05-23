@@ -512,7 +512,23 @@
   <div class="footer">
     <div class="firm">מערכת התאמת חשבוניות · Invoice Reconciliation</div>
     <div>קבצי הפלט נשמרים תחת <code>web_outputs/</code></div>
+    <div class="built-by">
+      <span class="heart">♥</span> נבנה על־ידי
+      <strong>נבות שלביקי</strong>, CFO
+    </div>
   </div>
+  <style>
+    .built-by {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid var(--rule);
+      font-size: 12px;
+      color: var(--muted-2);
+      letter-spacing: 0.02em;
+    }
+    .built-by .heart { color: var(--pink); margin-inline-end: 6px; }
+    .built-by strong { color: var(--ink); font-weight: 700; }
+  </style>
 </main>
 
 <div class="loading-overlay" id="loading">

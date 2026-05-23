@@ -36,6 +36,55 @@ from dateutil import parser as dateparser
 
 log = logging.getLogger("reorder_invoices")
 
+
+# ---------------------------------------------------------------------------
+# Cost tracker — accumulates token usage across all Claude calls in a run
+# ---------------------------------------------------------------------------
+@dataclass
+class _UsageTotals:
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_creation_tokens: int = 0
+    cache_read_tokens: int = 0
+    model: str = ""
+
+    def add(self, usage, model: str) -> None:
+        """Add an Anthropic Usage object to this accumulator."""
+        if usage is None:
+            return
+        self.calls += 1
+        self.input_tokens += getattr(usage, "input_tokens", 0) or 0
+        self.output_tokens += getattr(usage, "output_tokens", 0) or 0
+        self.cache_creation_tokens += getattr(usage, "cache_creation_input_tokens", 0) or 0
+        self.cache_read_tokens += getattr(usage, "cache_read_input_tokens", 0) or 0
+        if not self.model:
+            self.model = model
+
+    def cost_usd(self) -> Decimal:
+        """Compute total cost in USD using MODEL_PRICING_USD."""
+        prices = MODEL_PRICING_USD.get(self.model)
+        if prices is None:
+            return Decimal("0")
+        return (
+            Decimal(self.input_tokens) * prices["input"]
+            + Decimal(self.output_tokens) * prices["output"]
+            + Decimal(self.cache_creation_tokens) * prices["cache_write"]
+            + Decimal(self.cache_read_tokens) * prices["cache_read"]
+        )
+
+    def reset(self) -> None:
+        self.calls = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.cache_creation_tokens = 0
+        self.cache_read_tokens = 0
+        self.model = ""
+
+
+# Process-level singleton — populated by every extraction call during run().
+_run_usage = _UsageTotals()
+
 # ---------------------------------------------------------------------------
 # Tunables
 # ---------------------------------------------------------------------------
@@ -54,6 +103,15 @@ MATCH_THRESHOLD = 60.0  # below this -> unmatched
 # and the CLI / web app expose a per-run override. Update this constant when the
 # statutory rate changes; or pass a different value to `run()` / the form for one-offs.
 DEFAULT_VAT_RATE = Decimal("0.18")
+
+# Anthropic API pricing (USD per token). Source: anthropic.com/pricing.
+# Used to compute the run cost from response.usage after every Claude call.
+MODEL_PRICING_USD = {
+    "claude-opus-4-7":   {"input": Decimal("0.000005"),  "output": Decimal("0.000025"),  "cache_write": Decimal("0.00000625"), "cache_read": Decimal("0.0000005")},
+    "claude-opus-4-6":   {"input": Decimal("0.000005"),  "output": Decimal("0.000025"),  "cache_write": Decimal("0.00000625"), "cache_read": Decimal("0.0000005")},
+    "claude-sonnet-4-6": {"input": Decimal("0.000003"),  "output": Decimal("0.000015"),  "cache_write": Decimal("0.00000375"), "cache_read": Decimal("0.0000003")},
+    "claude-haiku-4-5":  {"input": Decimal("0.000001"),  "output": Decimal("0.000005"),  "cache_write": Decimal("0.00000125"), "cache_read": Decimal("0.0000001")},
+}
 
 HEB_COL_SUPPLIER = ("ספק", "שם ספק", "נותן שירות", "תיאור", "שם המוטב")
 HEB_COL_AMOUNT = ("סכום", "סה\"כ", "לתשלום", "סך הכל", "מחיר")
@@ -349,6 +407,7 @@ def parse_table_pdf_with_claude(
                 }],
                 output_format=_TableExtraction,
             )
+            _run_usage.add(getattr(response, "usage", None), model)
         except anthropic.APIError as e:
             log.warning("table page %d extraction failed: %s", page_i, e)
             continue
@@ -418,6 +477,7 @@ def extract_fields_from_image(
         }],
         output_format=_ExtractedInvoice,
     )
+    _run_usage.add(getattr(response, "usage", None), model)
     return response.parsed_output
 
 
@@ -1452,6 +1512,26 @@ def generate_run_report(
     A(f"- שיעור מע״מ שהוחל על צד הטבלה: **{int(vat_rate * 100)}%**")
     A("- אלגוריתם התאמה: שני מפתחות (ספק + סכום כולל מע״מ)")
     A("- ספים: התאמה מלאה ≥ 90, התאמה חלשה ≥ 70, אחרת לא הותאם")
+    # Cost summary (read usage.json if present)
+    usage_path = out_dir / "usage.json"
+    if usage_path.exists():
+        try:
+            import json as _json
+            u = _json.loads(usage_path.read_text(encoding="utf-8"))
+            cost = Decimal(u.get("cost_usd", "0"))
+            total_tokens = u.get("input_tokens", 0) + u.get("output_tokens", 0) + u.get("cache_creation_tokens", 0) + u.get("cache_read_tokens", 0)
+            A("")
+            A("### עלות API")
+            A(f"- מודל: `{u.get('model', '?')}`")
+            A(f"- קריאות API: **{u.get('calls', 0)}**")
+            A(f"- סך טוקנים: {total_tokens:,}")
+            A(f"  - input: {u.get('input_tokens', 0):,}")
+            A(f"  - output: {u.get('output_tokens', 0):,}")
+            A(f"  - cache write: {u.get('cache_creation_tokens', 0):,}")
+            A(f"  - cache read: {u.get('cache_read_tokens', 0):,}")
+            A(f"- 💰 **עלות כוללת: ${cost:.4f}** (≈ ₪{cost * Decimal('3.7'):.2f})")
+        except Exception:
+            pass
     A("")
 
     # 2. Extraction quality
@@ -1654,6 +1734,7 @@ def run(
 ) -> dict:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    _run_usage.reset()
     client = anthropic.Anthropic()
     if use_vision_for_table:
         rows = parse_table_pdf_with_claude(table_pdf, client=client)
@@ -1669,6 +1750,20 @@ def run(
     write_report_csv(matches, out_csv)
     write_extracted_csv(pages, extracted_csv)
     write_table_csv(rows, table_csv)
+    # Persist the token usage so the run report can include cost details.
+    try:
+        import json as _json
+        (out_dir / "usage.json").write_text(_json.dumps({
+            "calls": _run_usage.calls,
+            "input_tokens": _run_usage.input_tokens,
+            "output_tokens": _run_usage.output_tokens,
+            "cache_creation_tokens": _run_usage.cache_creation_tokens,
+            "cache_read_tokens": _run_usage.cache_read_tokens,
+            "model": _run_usage.model,
+            "cost_usd": str(_run_usage.cost_usd()),
+        }, indent=2), encoding="utf-8")
+    except Exception as e:
+        log.warning("usage.json write failed: %s", e)
     # Generate the Hebrew audit report from the CSVs that were just written.
     try:
         generate_run_report(out_dir, vat_rate=vat_rate)
