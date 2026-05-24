@@ -74,11 +74,13 @@ def _write_status(job_dir: Path, status: str, pct: int = 0, msg: str = "") -> No
 
 def _run_pipeline_bg(job_dir: Path, max_pages, vat_rate) -> None:
     try:
+        log.info("=== job %s starting (max_pages=%s, vat=%s) ===", job_dir.name, max_pages, vat_rate)
         _write_status(job_dir, "running", 2, "מתחיל עיבוד חשבוניות…")
         ri.run(job_dir / "table.pdf", job_dir / "scanned.pdf", job_dir, max_pages=max_pages, vat_rate=vat_rate)
         _write_status(job_dir, "done", 100, "הושלם")
+        log.info("=== job %s completed successfully ===", job_dir.name)
     except Exception as e:
-        log.exception("background job %s failed", job_dir.name)
+        log.exception("=== job %s FAILED: %s ===", job_dir.name, e)
         _write_status(job_dir, "error", 0, f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}")
 
 
