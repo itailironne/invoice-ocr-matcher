@@ -225,7 +225,8 @@
   }
   .drop:hover { border-color: var(--primary); background: var(--primary-soft); transform: translateY(-1px); }
   .drop.dragging { border-color: var(--primary); border-style: solid; background: var(--primary-soft); transform: scale(1.01); }
-  .drop input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; z-index: 1; }
+  .drop input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .drop .icon, .drop .title, .drop .hint { pointer-events: none; }
   .drop .icon {
     width: 52px; height: 52px;
     margin: 0 auto 14px;
@@ -589,15 +590,22 @@
       });
     };
     input.addEventListener('change', updateList);
-    ['dragenter','dragover'].forEach(ev => dropEl.addEventListener(ev, e => { e.preventDefault(); dropEl.classList.add('dragging'); }));
-    ['dragleave','drop'].forEach(ev => dropEl.addEventListener(ev, e => { e.preventDefault(); dropEl.classList.remove('dragging'); }));
-    dropEl.addEventListener('drop', e => {
+    const handleDrop = e => {
+      e.preventDefault();
+      dropEl.classList.remove('dragging');
       const dt = new DataTransfer();
       if (multiple) { Array.from(input.files || []).forEach(f => dt.items.add(f)); }
       Array.from(e.dataTransfer.files).forEach(f => dt.items.add(f));
       input.files = dt.files;
       updateList();
+    };
+    [dropEl, input].forEach(el => {
+      el.addEventListener('dragenter', e => { e.preventDefault(); dropEl.classList.add('dragging'); });
+      el.addEventListener('dragover',  e => { e.preventDefault(); dropEl.classList.add('dragging'); });
+      el.addEventListener('dragleave', e => { e.preventDefault(); dropEl.classList.remove('dragging'); });
+      el.addEventListener('drop', handleDrop);
     });
+    dropEl.addEventListener('click', () => input.click());
   }
   function wireSubmit(form, loadingMsg) {
     form.addEventListener('submit', () => {
