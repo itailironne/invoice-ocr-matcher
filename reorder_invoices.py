@@ -438,7 +438,7 @@ def render_pdf_pages_to_png(pdf_path: str | Path, dpi: int = RENDER_DPI) -> list
     doc = fitz.open(str(pdf_path))
     try:
         for page in doc:
-            pix = page.get_pixmap(dpi=dpi)
+            pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
             images.append(pix.tobytes(output="png"))
     finally:
         doc.close()
