@@ -408,8 +408,8 @@ def parse_table_pdf_with_claude(
                 output_format=_TableExtraction,
             )
             _run_usage.add(getattr(response, "usage", None), model)
-        except anthropic.APIError as e:
-            log.warning("table page %d extraction failed: %s", page_i, e)
+        except Exception as e:
+            log.error("table page %d extraction failed (%s): %s", page_i, type(e).__name__, e)
             continue
         page_rows = response.parsed_output.rows or []
         for r in page_rows:
@@ -553,8 +553,8 @@ def _try_extract_page(client, img_bytes, page_index, *, model=CLAUDE_MODEL) -> O
     """Helper: extract one page; on API error returns an all-null OcrPage."""
     try:
         ex = extract_fields_from_image(client, img_bytes, model=model)
-    except anthropic.APIError as e:
-        log.warning("page %d extraction API error: %s", page_index, e)
+    except Exception as e:
+        log.error("page %d extraction failed (%s): %s", page_index, type(e).__name__, e)
         return OcrPage(page_index=page_index, supplier=None, amount=None, date=None, id_number=None)
     return OcrPage(
         page_index=page_index,
