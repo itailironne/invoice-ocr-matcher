@@ -605,7 +605,7 @@
       el.addEventListener('dragleave', e => { e.preventDefault(); dropEl.classList.remove('dragging'); });
       el.addEventListener('drop', handleDrop);
     });
-    dropEl.addEventListener('click', () => input.click());
+    dropEl.addEventListener('click', e => { if (e.target !== input) input.click(); });
   }
   function wireSubmit(form, loadingMsg) {
     form.addEventListener('submit', () => {
