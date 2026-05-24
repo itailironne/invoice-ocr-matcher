@@ -1560,10 +1560,11 @@ def generate_run_report(
     A(f"- התפלגות גדלים: " + ", ".join(f"גודל {k}: {v}" for k, v in sorted(size_dist.items())))
     A("")
     if multi_clusters:
-        A("**רשימת אשכולות רב־עמודיים:**")
+        A("**רשימת אשכולות רב־עמודיים (עמודים בקובץ הסריקות):**")
         for c in clusters:
             if len(c.page_indices) >= 2:
-                A(f"- עמודים `{c.page_indices}` ← {c.supplier or '(ספק לא ידוע)'}")
+                pages_str = f"{c.page_indices[0]}–{c.page_indices[-1]}" if len(c.page_indices) > 1 else str(c.page_indices[0])
+                A(f"- עמודים {pages_str} בקובץ הסריקות ← {c.supplier or '(ספק לא ידוע)'}")
         A("")
 
     # 4. Match results
@@ -1610,12 +1611,17 @@ def generate_run_report(
                 reason, top3 = _classify_unmatched(tbl_row, clusters, used_cluster_ids, vat_rate, table_rows)
                 A(f"- **סיבה**: {reason}")
                 if top3:
-                    A("- **מועמדים מובילים:**")
+                    A("- **חשבוניות סרוקות קרובות ביותר (בקובץ הסריקות):**")
                     for i, cand in enumerate(top3, 1):
                         c = cand["cluster"]
-                        in_use_mark = " ⚠️ (תפוס על־ידי שורה אחרת)" if cand["in_use"] else ""
-                        A(f"  {i}. אשכול עמודים `{c.page_indices}` — ספק: `{c.supplier or '?'}`, סכום: {c.amount or '?'}{in_use_mark}")
-                        A(f"     - ציון ספק: {int(cand['sup'])}, ציון סכום: {int(cand['amt'])}")
+                        in_use_mark = " ⚠️ (כבר שויך לשורה אחרת)" if cand["in_use"] else ""
+                        pages_str = f"עמוד {c.page_indices[0]}" if len(c.page_indices) == 1 else f"עמודים {c.page_indices[0]}–{c.page_indices[-1]}"
+                        sup_score = int(cand['sup'])
+                        amt_score = int(cand['amt'])
+                        sup_label = "תואם" if sup_score >= 80 else ("דומה חלקית" if sup_score >= 40 else "לא תואם")
+                        amt_label = "תואם" if amt_score >= 80 else ("קרוב" if amt_score >= 40 else "לא תואם")
+                        A(f"  {i}. {pages_str} בקובץ הסריקות — ספק: {c.supplier or '?'}, סכום: {c.amount or '?'} ₪{in_use_mark}")
+                        A(f"     - שם הספק: {sup_label} | סכום: {amt_label}")
             else:
                 A("- _לא הצלחתי לטעון את פרטי השורה מהטבלה._")
             A("")
@@ -1631,12 +1637,21 @@ def generate_run_report(
         A("_שורות אלה הותאמו אך הציון לא הגיע ל־90. מומלץ לבדוק ידנית במיקום ה־PDF המצוין._")
         A("")
         for r in low_match_rows:
-            pos = r.get("output_pdf_position") or "?"
             row_idx = r.get("table_row_index") or "?"
             tbl_sup = r.get("table_supplier") or r.get("supplier") or ""
-            scn_sup = r.get("scan_supplier") or ""
-            score = r.get("match_score") or "?"
-            A(f"#### עמוד PDF {pos} · שורה {row_idx}: `{tbl_sup}` ↔ `{scn_sup}` (ציון {score})")
+            amt = r.get("table_amount_pre_vat") or r.get("amount") or ""
+            date = r.get("table_date") or r.get("date") or ""
+            matched_pages = r.get("matched_cluster_pages") or r.get("matched_page") or ""
+            if matched_pages:
+                pages_list = [p.strip() for p in matched_pages.split(",")]
+                if len(pages_list) == 1:
+                    location = f"עמוד {pages_list[0]} בקובץ הסריקות"
+                else:
+                    location = f"עמודים {pages_list[0]}–{pages_list[-1]} בקובץ הסריקות"
+            else:
+                location = "מיקום לא ידוע"
+            A(f"#### שורה {row_idx}: {tbl_sup} — {amt} ₪ ({date})")
+            A(f"- **מותאם אל**: {location}")
             A(f"- **מה חלש**: {_classify_low_confidence(r, vat_rate)}")
             A("")
 
@@ -1654,29 +1669,29 @@ def generate_run_report(
         no_supplier_pages = [p for p in pages if not p.supplier and (p.amount is not None or p.date or p.id_number)]
 
         if blank_pages:
-            A(f"### עמודים ריקים לחלוטין ({len(blank_pages)})")
-            A("_נראה כעמודי הפרדה / ריקים. בדוק את ה־PDF המקורי._")
+            A(f"### עמודים ריקים לחלוטין בקובץ הסריקות ({len(blank_pages)})")
+            A("_נראה כעמודי הפרדה / ריקים. בדוק את קובץ הסריקות המקורי._")
             for p in blank_pages[:20]:
-                A(f"- עמוד {p.page_index}")
+                A(f"- עמוד {p.page_index} בקובץ הסריקות")
             A("")
 
         if no_amount_pages:
-            A(f"### עמודים שחסר בהם הסכום ({len(no_amount_pages)})")
-            A("_עמודים אלה לא יוכלו להיות מותאמים בקפדנות. סבירות גבוהה שהם עמוד 2 של חשבונית רב־עמודית (אם עמוד {N-1} הוא אותו ספק) או סריקה באיכות נמוכה._")
+            A(f"### עמודים שחסר בהם הסכום בקובץ הסריקות ({len(no_amount_pages)})")
+            A("_עמודים אלה לא יוכלו להיות מותאמים. ייתכן שהם עמוד המשך של חשבונית (עמוד 2 וכו׳) או שהסריקה באיכות נמוכה._")
             for p in no_amount_pages[:20]:
-                A(f"- עמוד {p.page_index}: `{p.supplier}`")
+                A(f"- עמוד {p.page_index} בקובץ הסריקות — ספק: {p.supplier}")
             if len(no_amount_pages) > 20:
                 A(f"- _...ועוד {len(no_amount_pages) - 20} עמודים_")
             A("")
 
         if no_supplier_pages:
-            A(f"### עמודים שחסר בהם הספק ({len(no_supplier_pages)})")
+            A(f"### עמודים שחסר בהם הספק בקובץ הסריקות ({len(no_supplier_pages)})")
             for p in no_supplier_pages[:20]:
                 fields = []
                 if p.amount: fields.append(f"סכום={p.amount}")
                 if p.date: fields.append(f"תאריך={p.date}")
                 if p.id_number: fields.append(f"ע.מ.={p.id_number}")
-                A(f"- עמוד {p.page_index}: " + ", ".join(fields))
+                A(f"- עמוד {p.page_index} בקובץ הסריקות: " + ", ".join(fields))
             A("")
 
     # 7. Recommendations
