@@ -409,6 +409,8 @@ def parse_table_pdf_with_claude(
             )
             _run_usage.add(getattr(response, "usage", None), model)
         except Exception as e:
+            if _is_fatal_api_error(e):
+                raise
             log.error("table page %d extraction failed (%s): %s", page_i, type(e).__name__, e)
             continue
         page_rows = response.parsed_output.rows or []
@@ -562,11 +564,21 @@ def extract_pages_with_claude(
     return pages
 
 
+def _is_fatal_api_error(e: Exception) -> bool:
+    """Return True for errors that will not improve with retries (no credits, bad key, etc.)."""
+    msg = str(e).lower()
+    return isinstance(e, (anthropic.AuthenticationError, anthropic.PermissionDeniedError)) or (
+        isinstance(e, anthropic.BadRequestError) and "credit balance" in msg
+    )
+
+
 def _try_extract_page(client, img_bytes, page_index, *, model=CLAUDE_MODEL) -> OcrPage:
     """Helper: extract one page; on API error returns an all-null OcrPage."""
     try:
         ex = extract_fields_from_image(client, img_bytes, model=model)
     except Exception as e:
+        if _is_fatal_api_error(e):
+            raise  # let it surface immediately — no point continuing
         log.error("page %d extraction failed (%s): %s", page_index, type(e).__name__, e)
         return OcrPage(page_index=page_index, supplier=None, amount=None, date=None, id_number=None)
     return OcrPage(
