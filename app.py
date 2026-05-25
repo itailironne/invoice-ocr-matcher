@@ -73,8 +73,16 @@ def _write_status(job_dir: Path, status: str, pct: int = 0, msg: str = "") -> No
 
 
 def _run_pipeline_bg(job_dir: Path, max_pages, vat_rate) -> None:
+    # Write all logs (root logger) to a file in the job dir so they are always visible.
+    log_path = job_dir / "pipeline.log"
+    file_handler = logging.FileHandler(str(log_path), encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    root_logger = logging.getLogger()
+    root_logger.addHandler(file_handler)
     try:
         log.info("=== job %s starting (max_pages=%s, vat=%s) ===", job_dir.name, max_pages, vat_rate)
+        log.info("ANTHROPIC_API_KEY set: %s", bool(os.environ.get("ANTHROPIC_API_KEY")))
         _write_status(job_dir, "running", 2, "מתחיל עיבוד חשבוניות…")
         ri.run(job_dir / "table.pdf", job_dir / "scanned.pdf", job_dir, max_pages=max_pages, vat_rate=vat_rate)
         _write_status(job_dir, "done", 100, "הושלם")
@@ -82,6 +90,9 @@ def _run_pipeline_bg(job_dir: Path, max_pages, vat_rate) -> None:
     except Exception as e:
         log.exception("=== job %s FAILED: %s ===", job_dir.name, e)
         _write_status(job_dir, "error", 0, f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}")
+    finally:
+        root_logger.removeHandler(file_handler)
+        file_handler.close()
 
 
 @app.route("/")

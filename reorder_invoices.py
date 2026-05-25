@@ -435,13 +435,26 @@ def parse_table_pdf_with_claude(
 def render_pdf_pages_to_png(pdf_path: str | Path, dpi: int = RENDER_DPI) -> list[bytes]:
     """Render every page of `pdf_path` to PNG bytes. Returns one bytes blob per page."""
     images: list[bytes] = []
-    doc = fitz.open(str(pdf_path))
+    log.info("render_pdf_pages_to_png: opening %s", pdf_path)
     try:
-        for page in doc:
-            pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
-            images.append(pix.tobytes(output="png"))
+        doc = fitz.open(str(pdf_path))
+    except Exception as e:
+        log.error("render_pdf_pages_to_png: failed to open %s: %s (%s)", pdf_path, e, type(e).__name__)
+        return images
+    try:
+        n = len(doc)
+        log.info("render_pdf_pages_to_png: %d pages found in %s", n, pdf_path)
+        for i, page in enumerate(doc):
+            try:
+                pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
+                png = pix.tobytes(output="png")
+                images.append(png)
+                log.info("render_pdf_pages_to_png: page %d rendered (%d bytes)", i, len(png))
+            except Exception as e:
+                log.error("render_pdf_pages_to_png: page %d failed: %s (%s)", i, e, type(e).__name__)
     finally:
         doc.close()
+    log.info("render_pdf_pages_to_png: done — %d/%d pages rendered", len(images), n if 'n' in dir() else '?')
     return images
 
 
