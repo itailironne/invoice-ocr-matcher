@@ -1425,7 +1425,7 @@ def _classify_low_confidence(match_row: dict, vat_rate: Decimal) -> str:
     if scan_sup and table_sup:
         s = _score_supplier(table_sup, scan_sup)
         if s < 80:
-            reasons.append(f"חוסר חפיפה חלקי בשם הספק (ציון ספק {int(s)})")
+            reasons.append(f"שם הספק בסריקה דומה חלקית בלבד לשם בטבלה ({int(s)}% התאמה)")
     elif scan_sup and not table_sup:
         reasons.append("אין שם ספק בצד הטבלה להשוואה")
 
@@ -1443,7 +1443,7 @@ def _classify_low_confidence(match_row: dict, vat_rate: Decimal) -> str:
 
     if not reasons:
         if score < 90:
-            reasons.append(f"ציון התאמה משוקלל ({score}) מתחת לסף ההתאמה המלאה (90)")
+            reasons.append(f"ציון ההתאמה ({score:.0f}) נמוך מעט מהסף הנדרש — מומלץ לבדוק ידנית")
         else:
             reasons.append("אחד מהשדות אינו מושלם — מומלץ לבדוק ידנית")
     return "; ".join(reasons)

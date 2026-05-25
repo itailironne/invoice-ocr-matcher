@@ -353,13 +353,12 @@ def view_results(job: str):
     table_csv_name = _pick_newest(job_dir, ["table_extracted.csv"])
     pdf_name = _pick_newest(job_dir, ["output_sorted_v3.pdf", "output_sorted_v2.pdf", "output_sorted.pdf"])
 
-    # Run report (generate on the fly if missing — instant, no API calls)
+    # Always regenerate run_report.md so it reflects the latest report format.
     report_md_path = job_dir / "run_report.md"
-    if not report_md_path.exists():
-        try:
-            ri.generate_run_report(job_dir)
-        except Exception as e:
-            log.warning("on-demand report generation failed for %s: %s", job, e)
+    try:
+        ri.generate_run_report(job_dir)
+    except Exception as e:
+        log.warning("on-demand report generation failed for %s: %s", job, e)
     report_html = None
     if report_md_path.exists():
         try:
@@ -369,12 +368,24 @@ def view_results(job: str):
         except Exception as e:
             log.warning("markdown render failed: %s", e)
 
+    # Read cost from usage.json if present
+    cost_usd = None
+    usage_path = job_dir / "usage.json"
+    if usage_path.exists():
+        try:
+            import json as _json2
+            u = _json2.loads(usage_path.read_text(encoding="utf-8"))
+            cost_usd = float(u.get("cost_usd", 0))
+        except Exception:
+            pass
+
     summary = {
         "rows": len(report_rows),
         "pages": pages_count,
         "matched": matched,
         "low_confidence": low_confidence,
         "unmatched": unmatched,
+        "cost_usd": cost_usd,
     }
     return render_template(
         "results.html",

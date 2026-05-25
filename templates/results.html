@@ -36,6 +36,12 @@
     <div>כל שורות הטבלה הותאמו לעמודי הסריקה בהצלחה.</div>
   </div>
   {% endif %}
+
+  {% if summary.cost_usd is not none %}
+  <p class="muted" style="margin-top:10px;font-size:0.85rem;">
+    💰 עלות הרצה זו: <strong>${{ "%.4f"|format(summary.cost_usd) }}</strong> (≈ ₪{{ "%.2f"|format(summary.cost_usd * 3.7) }})
+  </p>
+  {% endif %}
 </div>
 
 {# ── 2. DETAILED ISSUES ── #}
