@@ -46,6 +46,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("invoice_reorder.app")
 
 app = Flask(__name__)
+
+@app.template_filter("timestamp_to_date")
+def _ts_to_date(ts):
+    from datetime import datetime
+    try:
+        return datetime.fromtimestamp(int(ts)).strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        return str(ts)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 
@@ -395,6 +403,19 @@ def list_runs():
             runs.append((d.name, "cli", d.stat().st_mtime))
     runs.sort(key=lambda x: x[2], reverse=True)
     return render_template("runs.html", runs=runs)
+
+
+@app.route("/logs/<job>")
+def view_logs(job: str):
+    """Show pipeline.log as plain text in the browser."""
+    job_dir = _resolve_job_dir(job)
+    if not job_dir:
+        abort(404)
+    log_file = job_dir / "pipeline.log"
+    if not log_file.exists():
+        return "<pre>לא נמצא לוג להרצה זו.\n\nאם הרצת לפני עדכון זה, הרץ שוב כדי לראות לוג.</pre>", 200
+    text = log_file.read_text(encoding="utf-8", errors="replace")
+    return f"<html><body dir='ltr'><pre style='font-size:13px;white-space:pre-wrap'>{text}</pre></body></html>", 200
 
 
 @app.route("/download/<job>/<path:filename>")

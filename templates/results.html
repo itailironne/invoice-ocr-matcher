@@ -119,7 +119,7 @@
     {% if extracted_csv %}<a class="button ghost" href="{{ url_for('download', job=job, filename=extracted_csv) }}">⬇ שדות מהסריקות (CSV)</a>{% endif %}
     {% if table_csv %}<a class="button ghost" href="{{ url_for('download', job=job, filename=table_csv) }}">⬇ שדות מהטבלה (CSV)</a>{% endif %}
     {% if report_md_filename %}<a class="button ghost" href="{{ url_for('download', job=job, filename=report_md_filename) }}">⬇ דוח אבחון (MD)</a>{% endif %}
-    <a class="button ghost" href="{{ url_for('download', job=job, filename='pipeline.log') }}" title="לוג טכני של ההרצה לאבחון בעיות">⬇ לוג הרצה</a>
+    <a class="button ghost" href="{{ url_for('view_logs', job=job) }}" target="_blank" title="לוג טכני של ההרצה לאבחון בעיות">🔍 לוג הרצה</a>
   </div>
 </div>
 

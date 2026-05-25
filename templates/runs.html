@@ -22,7 +22,7 @@
       <tr>
         <td><code>{{ name }}</code></td>
         <td>{% if source == 'cli' %}<span class="badge muted">שורת פקודה</span>{% else %}<span class="badge ok">דרך האתר</span>{% endif %}</td>
-        <td class="num">{{ mtime|int }}</td>
+        <td class="num">{{ mtime|int|timestamp_to_date }}</td>
         <td><a class="button ghost" href="{{ url_for('view_results', job=name) }}">פתח ←</a></td>
       </tr>
       {% endfor %}

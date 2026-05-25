@@ -1776,10 +1776,13 @@ def run(
     out_dir.mkdir(parents=True, exist_ok=True)
     _run_usage.reset()
     client = anthropic.Anthropic()
-    if use_vision_for_table:
+    # Try pdfplumber first (fast, free). Fall back to Claude vision if it gets 0 rows.
+    rows = parse_table_pdf(table_pdf)
+    if not rows:
+        log.info("pdfplumber got 0 rows — retrying with Claude vision")
         rows = parse_table_pdf_with_claude(table_pdf, client=client)
     else:
-        rows = parse_table_pdf(table_pdf)
+        log.info("pdfplumber extracted %d table rows", len(rows))
     pages = extract_pages_with_claude(scanned_pdf, client=client, max_pages=max_pages)
     matches = match(rows, pages, vat_rate=vat_rate)
     out_pdf = out_dir / "output_sorted.pdf"
