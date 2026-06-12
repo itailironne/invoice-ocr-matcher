@@ -1,13 +1,11 @@
-"""Flask web app for the invoice reorder pipeline.
+"""Flask web app for the invoice reorder pipeline (Gemini edition).
 
 Routes:
   GET  /         — main page: upload table.pdf + scanned_invoices.pdf
   POST /reorder  — runs the full pipeline, returns a results page with download links
-  GET  /test     — single-invoice extraction test page
-  POST /test     — extracts fields from one uploaded file, returns DataFrame + CSV
   GET  /download/<job>/<filename> — serve generated outputs
 
-Requires ANTHROPIC_API_KEY in the environment.
+Requires GOOGLE_API_KEY in the environment.
 
 Run with:
     python app.py
@@ -33,6 +31,7 @@ from flask import (
 )
 
 import reorder_invoices as ri
+from gemini import gemini_run
 
 APP_ROOT = Path(__file__).resolve().parent
 JOBS_DIR = APP_ROOT / "web_outputs"
@@ -58,8 +57,8 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 
 def _check_api_key() -> Optional[str]:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return "ANTHROPIC_API_KEY is not set in the server's environment. Set it and restart the app."
+    if not os.environ.get("GOOGLE_API_KEY"):
+        return "GOOGLE_API_KEY is not set in the server's environment. Set it and restart the app."
     return None
 
 
@@ -90,9 +89,9 @@ def _run_pipeline_bg(job_dir: Path, max_pages, vat_rate) -> None:
     root_logger.addHandler(file_handler)
     try:
         log.info("=== job %s starting (max_pages=%s, vat=%s) ===", job_dir.name, max_pages, vat_rate)
-        log.info("ANTHROPIC_API_KEY set: %s", bool(os.environ.get("ANTHROPIC_API_KEY")))
+        log.info("GOOGLE_API_KEY set: %s", bool(os.environ.get("GOOGLE_API_KEY")))
         _write_status(job_dir, "running", 2, "מתחיל עיבוד חשבוניות…")
-        ri.run(job_dir / "table.pdf", job_dir / "scanned.pdf", job_dir, max_pages=max_pages, vat_rate=vat_rate)
+        gemini_run(job_dir / "table.pdf", job_dir / "scanned.pdf", job_dir, max_pages=max_pages, vat_rate=vat_rate)
         _write_status(job_dir, "done", 100, "הושלם")
         log.info("=== job %s completed successfully ===", job_dir.name)
     except Exception as e:
@@ -353,10 +352,26 @@ def view_results(job: str):
     table_csv_name = _pick_newest(job_dir, ["table_extracted.csv"])
     pdf_name = _pick_newest(job_dir, ["output_sorted_v3.pdf", "output_sorted_v2.pdf", "output_sorted.pdf"])
 
+    # Read cost and vat_rate from usage.json if present
+    cost_usd = None
+    vat_rate_for_report = None
+    usage_path = job_dir / "usage.json"
+    if usage_path.exists():
+        try:
+            import json as _json2
+            from decimal import Decimal as _Dec
+            u = _json2.loads(usage_path.read_text(encoding="utf-8"))
+            cost_usd = float(u.get("cost_usd", 0))
+            if u.get("vat_rate"):
+                vat_rate_for_report = _Dec(u["vat_rate"])
+        except Exception:
+            pass
+
     # Always regenerate run_report.md so it reflects the latest report format.
     report_md_path = job_dir / "run_report.md"
     try:
-        ri.generate_run_report(job_dir)
+        regen_kwargs = {"vat_rate": vat_rate_for_report} if vat_rate_for_report is not None else {}
+        ri.generate_run_report(job_dir, **regen_kwargs)
     except Exception as e:
         log.warning("on-demand report generation failed for %s: %s", job, e)
     report_html = None
@@ -367,17 +382,6 @@ def view_results(job: str):
             report_html = _md.markdown(report_md_text, extensions=["tables", "fenced_code"])
         except Exception as e:
             log.warning("markdown render failed: %s", e)
-
-    # Read cost from usage.json if present
-    cost_usd = None
-    usage_path = job_dir / "usage.json"
-    if usage_path.exists():
-        try:
-            import json as _json2
-            u = _json2.loads(usage_path.read_text(encoding="utf-8"))
-            cost_usd = float(u.get("cost_usd", 0))
-        except Exception:
-            pass
 
     summary = {
         "rows": len(report_rows),
@@ -450,8 +454,8 @@ def main():
     """Local development entry point. In production (Render / any host), use
     a WSGI server like gunicorn that imports `app:app` directly — see
     render.yaml for the production command."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("WARNING: ANTHROPIC_API_KEY is not set. The app will start but every extraction will fail until you set it.", file=sys.stderr)
+    if not os.environ.get("GOOGLE_API_KEY"):
+        print("WARNING: GOOGLE_API_KEY is not set. The app will start but every extraction will fail until you set it.", file=sys.stderr)
     port = int(os.environ.get("PORT", 5000))
     host = os.environ.get("HOST", "127.0.0.1")
     banner = (

@@ -30,8 +30,6 @@ services:
 
     envVars:
       # Set this in the Render dashboard — DO NOT put the key here.
-      - key: ANTHROPIC_API_KEY
-        sync: false
       - key: GOOGLE_API_KEY
         sync: false
       - key: PYTHONIOENCODING
