@@ -14,7 +14,7 @@
 #
 services:
   - type: web
-    name: invoice-reorder
+    name: invoice-ocr-matcher
     runtime: python
     plan: free
     region: oregon
@@ -31,6 +31,8 @@ services:
     envVars:
       # Set this in the Render dashboard — DO NOT put the key here.
       - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
         sync: false
       - key: PYTHONIOENCODING
         value: utf-8
