@@ -95,36 +95,57 @@ def extract_pages_with_gemini(
     retry_with_rotation: bool = True,
     usage: Optional[GeminiUsageTotals] = None,
 ) -> list[ri.OcrPage]:
-    """Render each page of the scanned PDF and extract fields via Gemini vision."""
+    """Render each page of the scanned PDF and extract fields via Gemini vision.
+
+    Pages are rendered and released one at a time to keep memory flat.
+    """
+    import fitz
     if usage is None:
         usage = GeminiUsageTotals()
-    images = ri.render_pdf_pages_to_png(pdf_path, dpi=dpi)
-    if max_pages is not None and max_pages > 0:
-        images = images[:max_pages]
-    pages: list[ri.OcrPage] = []
-    for i, img in enumerate(images):
-        page = _try_extract_page_gemini(invoice_model, img, i, model_name=model_name, usage=usage)
-        if retry_with_rotation and ri._likely_misread(page):
-            best = page
-            log.info("page %d looked misread (non-null=%d) — trying rotations", i, ri._count_non_null(page))
-            for rotation in (180, 90, 270):
-                try:
-                    rotated_bytes = ri._rotate_png_bytes(img, rotation)
-                except Exception as e:
-                    log.warning("page %d rotation %d° render failed: %s", i, rotation, e)
-                    continue
-                candidate = _try_extract_page_gemini(invoice_model, rotated_bytes, i,
-                                                     model_name=model_name, usage=usage)
-                if ri._count_non_null(candidate) > ri._count_non_null(best):
-                    log.info("page %d: rotation %d° improved extraction (%d -> %d non-null)",
-                             i, rotation, ri._count_non_null(best), ri._count_non_null(candidate))
-                    best = candidate
-                if ri._count_non_null(best) >= 3:
-                    break
-            page = best
-        pages.append(page)
-        log.info("page %d: supplier=%r amount=%s date=%s id=%s",
-                 i, page.supplier, page.amount, page.date, page.id_number)
+    try:
+        doc = fitz.open(str(pdf_path))
+    except Exception as e:
+        log.error("extract_pages_with_gemini: failed to open %s: %s", pdf_path, e)
+        return []
+    try:
+        n = len(doc)
+        limit = min(n, max_pages) if max_pages and max_pages > 0 else n
+        pages: list[ri.OcrPage] = []
+        for i in range(limit):
+            try:
+                pix = doc[i].get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
+                img = pix.tobytes(output="png")
+                del pix
+            except Exception as e:
+                log.error("page %d render failed: %s (%s)", i, e, type(e).__name__)
+                pages.append(ri.OcrPage(page_index=i, supplier=None, amount=None, date=None, id_number=None))
+                continue
+            page = _try_extract_page_gemini(invoice_model, img, i, model_name=model_name, usage=usage)
+            if retry_with_rotation and ri._likely_misread(page):
+                best = page
+                log.info("page %d looked misread (non-null=%d) — trying rotations", i, ri._count_non_null(page))
+                for rotation in (180, 90, 270):
+                    try:
+                        rotated_bytes = ri._rotate_png_bytes(img, rotation)
+                    except Exception as e:
+                        log.warning("page %d rotation %d° render failed: %s", i, rotation, e)
+                        continue
+                    candidate = _try_extract_page_gemini(invoice_model, rotated_bytes, i,
+                                                         model_name=model_name, usage=usage)
+                    del rotated_bytes
+                    if ri._count_non_null(candidate) > ri._count_non_null(best):
+                        log.info("page %d: rotation %d° improved (%d -> %d non-null)",
+                                 i, rotation, ri._count_non_null(best), ri._count_non_null(candidate))
+                        best = candidate
+                    if ri._count_non_null(best) >= 3:
+                        break
+                page = best
+            del img
+            pages.append(page)
+            log.info("page %d: supplier=%r amount=%s date=%s id=%s",
+                     i, page.supplier, page.amount, page.date, page.id_number)
+    finally:
+        doc.close()
     return pages
 
 

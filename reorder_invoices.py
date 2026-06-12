@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import sys
+import threading
 from collections import Counter
 from dataclasses import dataclass, field, asdict
 from datetime import date, datetime
@@ -82,8 +83,9 @@ class _UsageTotals:
         self.model = ""
 
 
-# Process-level singleton — populated by every extraction call during run().
+# Process-level singleton with a lock so concurrent Flask jobs don't corrupt each other.
 _run_usage = _UsageTotals()
+_run_usage_lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # Tunables
@@ -407,7 +409,8 @@ def parse_table_pdf_with_claude(
                 }],
                 output_format=_TableExtraction,
             )
-            _run_usage.add(getattr(response, "usage", None), model)
+            with _run_usage_lock:
+                _run_usage.add(getattr(response, "usage", None), model)
         except Exception as e:
             if _is_fatal_api_error(e):
                 raise
@@ -492,7 +495,8 @@ def extract_fields_from_image(
         }],
         output_format=_ExtractedInvoice,
     )
-    _run_usage.add(getattr(response, "usage", None), model)
+    with _run_usage_lock:
+        _run_usage.add(getattr(response, "usage", None), model)
     return response.parsed_output
 
 
@@ -530,37 +534,54 @@ def extract_pages_with_claude(
     If `retry_with_rotation` is True (default), pages that look like
     misreads (no supplier, mostly null fields) are retried at 90°/180°/270°
     rotation and the best result is kept.
+
+    Pages are rendered and released one at a time to keep memory usage flat
+    regardless of total page count (critical for Render 512 MB instances).
     """
     client = client or anthropic.Anthropic()
-    images = render_pdf_pages_to_png(pdf_path, dpi=dpi)
-    if max_pages is not None and max_pages > 0:
-        images = images[:max_pages]
-    pages: list[OcrPage] = []
-    for i, img in enumerate(images):
-        page = _try_extract_page(client, img, i, model=model)
-        if retry_with_rotation and _likely_misread(page):
-            best = page
-            best_img = img
-            log.info("page %d looked misread (non-null=%d) — trying rotations", i, _count_non_null(page))
-            for rotation in (180, 90, 270):  # 180° first — most common phone-photo case
-                try:
-                    rotated_bytes = _rotate_png_bytes(img, rotation)
-                except Exception as e:
-                    log.warning("page %d rotation %d° render failed: %s", i, rotation, e)
-                    continue
-                candidate = _try_extract_page(client, rotated_bytes, i, model=model)
-                if _count_non_null(candidate) > _count_non_null(best):
-                    log.info("page %d: rotation %d° improved extraction (%d -> %d non-null)",
-                             i, rotation, _count_non_null(best), _count_non_null(candidate))
-                    best = candidate
-                    best_img = rotated_bytes
-                # Stop early once we have a solid read.
-                if _count_non_null(best) >= 3:
-                    break
-            page = best
-        pages.append(page)
-        log.info("page %d: supplier=%r amount=%s date=%s id=%s",
-                 i, page.supplier, page.amount, page.date, page.id_number)
+    try:
+        doc = fitz.open(str(pdf_path))
+    except Exception as e:
+        log.error("extract_pages_with_claude: failed to open %s: %s", pdf_path, e)
+        return []
+    try:
+        n = len(doc)
+        limit = min(n, max_pages) if max_pages and max_pages > 0 else n
+        pages: list[OcrPage] = []
+        for i in range(limit):
+            try:
+                pix = doc[i].get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
+                img = pix.tobytes(output="png")
+                del pix
+            except Exception as e:
+                log.error("page %d render failed: %s (%s)", i, e, type(e).__name__)
+                pages.append(OcrPage(page_index=i, supplier=None, amount=None, date=None, id_number=None))
+                continue
+            page = _try_extract_page(client, img, i, model=model)
+            if retry_with_rotation and _likely_misread(page):
+                best = page
+                log.info("page %d looked misread (non-null=%d) — trying rotations", i, _count_non_null(page))
+                for rotation in (180, 90, 270):
+                    try:
+                        rotated_bytes = _rotate_png_bytes(img, rotation)
+                    except Exception as e:
+                        log.warning("page %d rotation %d° render failed: %s", i, rotation, e)
+                        continue
+                    candidate = _try_extract_page(client, rotated_bytes, i, model=model)
+                    del rotated_bytes
+                    if _count_non_null(candidate) > _count_non_null(best):
+                        log.info("page %d: rotation %d° improved (%d -> %d non-null)",
+                                 i, rotation, _count_non_null(best), _count_non_null(candidate))
+                        best = candidate
+                    if _count_non_null(best) >= 3:
+                        break
+                page = best
+            del img
+            pages.append(page)
+            log.info("page %d: supplier=%r amount=%s date=%s id=%s",
+                     i, page.supplier, page.amount, page.date, page.id_number)
+    finally:
+        doc.close()
     return pages
 
 
@@ -1088,13 +1109,28 @@ def write_sorted_pdf(scanned_pdf: str | Path, out_pdf: str | Path, matches: list
     log.info("wrote %s (%d pages, %d leftover appended)", out_pdf, len(order), len(leftover))
 
 
-def write_report_csv(matches: list[Match], path: str | Path) -> None:
-    fieldnames = ["table_row_index", "supplier", "amount", "date", "id_number", "matched_page", "match_score", "status"]
+def write_report_csv(matches: list[Match], path: str | Path, pages: list[OcrPage] | None = None) -> None:
+    page_by_index = {p.page_index: p for p in (pages or [])}
+    fieldnames = [
+        "table_row_index", "output_page",
+        "table_supplier", "scan_supplier",
+        "table_amount_pre_vat", "scan_amount",
+        "table_date",
+        "supplier", "amount", "date", "id_number",
+        "matched_page", "match_score", "status",
+    ]
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for m in matches:
+            scan_page = page_by_index.get(m.matched_page) if m.matched_page is not None else None
             row = asdict(m)
+            row["output_page"] = m.table_row_index + 1
+            row["table_supplier"] = m.supplier or ""
+            row["scan_supplier"] = (scan_page.supplier or "") if scan_page else ""
+            row["table_amount_pre_vat"] = "" if m.amount is None else str(m.amount)
+            row["scan_amount"] = "" if (not scan_page or scan_page.amount is None) else str(scan_page.amount)
+            row["table_date"] = "" if m.date is None else m.date.isoformat()
             row["amount"] = "" if row["amount"] is None else str(row["amount"])
             row["date"] = "" if row["date"] is None else row["date"].isoformat()
             row["id_number"] = "" if row["id_number"] is None else row["id_number"]
@@ -1466,10 +1502,14 @@ def generate_run_report(
     if extracted_csv.exists():
         pages = load_extracted_csv(extracted_csv)
 
-    # Load match_report.csv — tolerate both old and new schemas.
+    # Load match_report.csv — tolerate multiple naming variants.
     match_csv = out_dir / "match_report.csv"
     if not match_csv.exists():
-        match_csv = out_dir / "match_report_v3.csv"
+        for _alt in ("match_report_v3.csv", "match_report_v2.csv"):
+            _candidate = out_dir / _alt
+            if _candidate.exists():
+                match_csv = _candidate
+                break
     match_rows: list[dict] = []
     if match_csv.exists():
         with open(match_csv, encoding="utf-8-sig", newline="") as f:
@@ -1636,17 +1676,17 @@ def generate_run_report(
                 reason, top3 = _classify_unmatched(tbl_row, clusters, used_cluster_ids, vat_rate, table_rows)
                 A(f"- **סיבה**: {reason}")
                 if top3:
-                    A("- **חשבוניות סרוקות קרובות ביותר (בקובץ הסריקות):**")
-                    for i, cand in enumerate(top3, 1):
+                    cand_parts = []
+                    for cand in top3[:2]:
                         c = cand["cluster"]
-                        in_use_mark = " ⚠️ (כבר שויך לשורה אחרת)" if cand["in_use"] else ""
-                        pages_str = f"עמוד {c.page_indices[0]}" if len(c.page_indices) == 1 else f"עמודים {c.page_indices[0]}–{c.page_indices[-1]}"
+                        in_use_mark = " ⚠️" if cand["in_use"] else ""
+                        pages_str = f"עמ׳ {c.page_indices[0]}" if len(c.page_indices) == 1 else f"עמ׳ {c.page_indices[0]}–{c.page_indices[-1]}"
                         sup_score = int(cand['sup'])
                         amt_score = int(cand['amt'])
-                        sup_label = "תואם" if sup_score >= 80 else ("דומה חלקית" if sup_score >= 40 else "לא תואם")
-                        amt_label = "תואם" if amt_score >= 80 else ("קרוב" if amt_score >= 40 else "לא תואם")
-                        A(f"  {i}. {pages_str} בקובץ הסריקות — ספק: {c.supplier or '?'}, סכום: {c.amount or '?'} ₪{in_use_mark}")
-                        A(f"     - שם הספק: {sup_label} | סכום: {amt_label}")
+                        sup_label = "✓ ספק" if sup_score >= 80 else ("~ ספק" if sup_score >= 40 else "✗ ספק")
+                        amt_label = "✓ סכום" if amt_score >= 80 else ("~ סכום" if amt_score >= 40 else "✗ סכום")
+                        cand_parts.append(f"{pages_str}: {c.supplier or '?'}, {c.amount or '?'} ₪ ({sup_label}, {amt_label}){in_use_mark}")
+                    A(f"- **קרובים:** {' | '.join(cand_parts)}")
             else:
                 A("- _לא הצלחתי לטעון את פרטי השורה מהטבלה._")
             A("")
@@ -1774,15 +1814,21 @@ def run(
 ) -> dict:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    _run_usage.reset()
+    with _run_usage_lock:
+        _run_usage.reset()
     client = anthropic.Anthropic()
-    # Try pdfplumber first (fast, free). Fall back to Claude vision if it gets 0 rows.
+    # Try pdfplumber first (fast, free). Fall back to Claude vision if data quality is poor.
     rows = parse_table_pdf(table_pdf)
-    if not rows:
-        log.info("pdfplumber got 0 rows — retrying with Claude vision")
+    useful = sum(1 for r in rows if r.supplier and r.amount) if rows else 0
+    quality_ok = rows and useful / len(rows) >= 0.15
+    if not quality_ok:
+        log.info(
+            "pdfplumber got %d rows but only %d useful (supplier+amount) — retrying with Claude vision",
+            len(rows), useful,
+        )
         rows = parse_table_pdf_with_claude(table_pdf, client=client)
     else:
-        log.info("pdfplumber extracted %d table rows", len(rows))
+        log.info("pdfplumber extracted %d rows (%d useful)", len(rows), useful)
     pages = extract_pages_with_claude(scanned_pdf, client=client, max_pages=max_pages)
     matches = match(rows, pages, vat_rate=vat_rate)
     out_pdf = out_dir / "output_sorted.pdf"
@@ -1790,21 +1836,24 @@ def run(
     extracted_csv = out_dir / "all_invoices_extracted.csv"
     table_csv = out_dir / "table_extracted.csv"
     write_sorted_pdf(scanned_pdf, out_pdf, matches, total_pages=len(pages))
-    write_report_csv(matches, out_csv)
+    write_report_csv(matches, out_csv, pages=pages)
     write_extracted_csv(pages, extracted_csv)
     write_table_csv(rows, table_csv)
     # Persist the token usage so the run report can include cost details.
     try:
         import json as _json
-        (out_dir / "usage.json").write_text(_json.dumps({
-            "calls": _run_usage.calls,
-            "input_tokens": _run_usage.input_tokens,
-            "output_tokens": _run_usage.output_tokens,
-            "cache_creation_tokens": _run_usage.cache_creation_tokens,
-            "cache_read_tokens": _run_usage.cache_read_tokens,
-            "model": _run_usage.model,
-            "cost_usd": str(_run_usage.cost_usd()),
-        }, indent=2), encoding="utf-8")
+        with _run_usage_lock:
+            usage_snapshot = {
+                "calls": _run_usage.calls,
+                "input_tokens": _run_usage.input_tokens,
+                "output_tokens": _run_usage.output_tokens,
+                "cache_creation_tokens": _run_usage.cache_creation_tokens,
+                "cache_read_tokens": _run_usage.cache_read_tokens,
+                "model": _run_usage.model,
+                "cost_usd": str(_run_usage.cost_usd()),
+                "vat_rate": str(vat_rate),
+            }
+        (out_dir / "usage.json").write_text(_json.dumps(usage_snapshot, indent=2), encoding="utf-8")
     except Exception as e:
         log.warning("usage.json write failed: %s", e)
     # Generate the Hebrew audit report from the CSVs that were just written.
