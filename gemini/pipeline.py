@@ -310,7 +310,7 @@ def gemini_run(
 
     pages = extract_pages_with_gemini(
         scanned_pdf, invoice_model, model_name=model_name,
-        max_pages=max_pages, usage=usage,
+        max_pages=max_pages, usage=usage, dpi=150,
     )
 
     matches = ri.match(rows, pages, vat_rate=vat_rate)

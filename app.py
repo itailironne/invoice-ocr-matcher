@@ -46,6 +46,10 @@ log = logging.getLogger("invoice_reorder.app")
 
 app = Flask(__name__)
 
+# Only one pipeline job may run at a time — two concurrent runs each need ~200MB and
+# together exceed the 512MB Render Starter limit.
+_pipeline_semaphore = threading.Semaphore(1)
+
 @app.template_filter("timestamp_to_date")
 def _ts_to_date(ts):
     from datetime import datetime
@@ -80,6 +84,10 @@ def _write_status(job_dir: Path, status: str, pct: int = 0, msg: str = "") -> No
 
 
 def _run_pipeline_bg(job_dir: Path, max_pages, vat_rate) -> None:
+    if not _pipeline_semaphore.acquire(blocking=False):
+        _write_status(job_dir, "error", 0, "המערכת עסוקה — עיבוד אחר פועל כעת. אנא המתן לסיום ונסה שוב.")
+        log.warning("job %s rejected — another pipeline job is already running", job_dir.name)
+        return
     # Write all logs (root logger) to a file in the job dir so they are always visible.
     log_path = job_dir / "pipeline.log"
     file_handler = logging.FileHandler(str(log_path), encoding="utf-8")
@@ -98,6 +106,7 @@ def _run_pipeline_bg(job_dir: Path, max_pages, vat_rate) -> None:
         log.exception("=== job %s FAILED: %s ===", job_dir.name, e)
         _write_status(job_dir, "error", 0, f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}")
     finally:
+        _pipeline_semaphore.release()
         root_logger.removeHandler(file_handler)
         file_handler.close()
 
