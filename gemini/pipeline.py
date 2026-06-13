@@ -80,7 +80,8 @@ def extract_fields_from_image_gemini(
     usage: GeminiUsageTotals,
 ) -> ri._ExtractedInvoice:
     """Send one page image to Gemini and return parsed invoice fields."""
-    image_part = genai.types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
+    mime_type = "image/png" if image_bytes[:4] == b"\x89PNG" else "image/jpeg"
+    image_part = genai.types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
     response = invoice_model.generate_content([image_part, "Extract the invoice fields."])
     usage.add(getattr(response, "usage_metadata", None), model_name)
     return ri._ExtractedInvoice.model_validate_json(response.text)
