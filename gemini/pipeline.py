@@ -117,7 +117,38 @@ def _try_extract_page_gemini(
 # ---------------------------------------------------------------------------
 # Full scanned-PDF extraction
 # ---------------------------------------------------------------------------
-_BATCH_SIZE = 30  # pages per fitz open/close cycle — keeps mmap'd PDF data bounded
+_BATCH_SIZE = 10  # pages per fitz open/close cycle — keeps mmap'd PDF data bounded
+
+
+def _malloc_trim() -> None:
+    """Return free C-heap pages to the OS. No-op on non-Linux."""
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+
+def _page_to_jpeg(doc, page_index: int, dpi: int) -> bytes:
+    """Extract or render one PDF page as image bytes.
+
+    For scanned PDFs (one embedded image per page) extracts the original
+    compressed JPEG/PNG directly — no pixmap, no 6-12 MB uncompressed buffer.
+    Falls back to rendering when the page has multiple images or vector content.
+    """
+    import fitz
+    page = doc[page_index]
+    images = page.get_images(full=True)
+    if len(images) == 1:
+        try:
+            img_data = doc.extract_image(images[0][0])
+            return img_data["image"]  # original compressed bytes
+        except Exception as e:
+            log.debug("page %d direct-extract failed (%s), rendering instead", page_index, e)
+    pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
+    img_bytes = pix.tobytes(output="jpeg")
+    del pix
+    return img_bytes
 
 def extract_pages_with_gemini(
     pdf_path: str | Path,
@@ -162,11 +193,9 @@ def extract_pages_with_gemini(
         try:
             for i in range(batch_start, batch_end):
                 try:
-                    pix = doc[i].get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
-                    img = pix.tobytes(output="jpeg")
-                    del pix
+                    img = _page_to_jpeg(doc, i, dpi)
                 except Exception as e:
-                    log.error("page %d render failed: %s (%s)", i, e, type(e).__name__)
+                    log.error("page %d image failed: %s (%s)", i, e, type(e).__name__)
                     pages.append(ri.OcrPage(page_index=i, supplier=None, amount=None, date=None, id_number=None))
                     continue
                 page = _try_extract_page_gemini(invoice_model, img, i, model_name=model_name, usage=usage)
@@ -197,6 +226,7 @@ def extract_pages_with_gemini(
             doc.close()
             del doc
         _gc.collect()
+        _malloc_trim()
 
     return pages
 
