@@ -8,7 +8,6 @@ Requires GOOGLE_API_KEY in the environment.
 """
 from __future__ import annotations
 
-import io as _io
 import json as _json
 import logging
 import os
@@ -16,8 +15,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Optional
 
-from PIL import Image as _PILImage
-
+import google.ai.generativelanguage as glm
 import google.generativeai as genai
 
 import reorder_invoices as ri
@@ -83,7 +81,8 @@ def extract_fields_from_image_gemini(
     usage: GeminiUsageTotals,
 ) -> ri._ExtractedInvoice:
     """Send one page image to Gemini and return parsed invoice fields."""
-    image_part = _PILImage.open(_io.BytesIO(image_bytes))
+    mime_type = "image/png" if image_bytes[:4] == b"\x89PNG" else "image/jpeg"
+    image_part = glm.Part(inline_data=glm.Blob(mime_type=mime_type, data=image_bytes))
     response = invoice_model.generate_content([image_part, "Extract the invoice fields."])
     usage.add(getattr(response, "usage_metadata", None), model_name)
     return ri._ExtractedInvoice.model_validate_json(response.text)
@@ -196,7 +195,7 @@ def parse_table_pdf_with_gemini(
     images = ri.render_pdf_pages_to_png(pdf_path, dpi=dpi)
     all_rows: list[ri.TableRow] = []
     for page_i, img_bytes in enumerate(images):
-        img_part = _PILImage.open(_io.BytesIO(img_bytes))
+        img_part = glm.Part(inline_data=glm.Blob(mime_type="image/png", data=img_bytes))
         try:
             response = table_model.generate_content(
                 [img_part, "Extract every invoice row from this table page."]
