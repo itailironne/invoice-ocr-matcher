@@ -117,6 +117,8 @@ def _try_extract_page_gemini(
 # ---------------------------------------------------------------------------
 # Full scanned-PDF extraction
 # ---------------------------------------------------------------------------
+_BATCH_SIZE = 30  # pages per fitz open/close cycle — keeps mmap'd PDF data bounded
+
 def extract_pages_with_gemini(
     pdf_path: str | Path,
     invoice_model: genai.GenerativeModel,
@@ -128,57 +130,74 @@ def extract_pages_with_gemini(
 ) -> list[ri.OcrPage]:
     """Render each page of the scanned PDF and extract fields via Gemini vision.
 
-    Pages are rendered and released one at a time to keep memory flat.
+    The PDF is opened and closed every _BATCH_SIZE pages so the OS can reclaim
+    the memory-mapped PDF data between batches. Without this, a 100-page scanned
+    PDF can hold 100-300 MB of mmap'd data in RAM throughout the entire run.
     """
     import fitz
     if usage is None:
         usage = GeminiUsageTotals()
+
+    # Quick open just to get the page count, then close immediately.
     try:
-        doc = fitz.open(str(pdf_path))
+        _tmp = fitz.open(str(pdf_path))
+        n = len(_tmp)
+        _tmp.close()
+        del _tmp
     except Exception as e:
         log.error("extract_pages_with_gemini: failed to open %s: %s", pdf_path, e)
         return []
-    try:
-        n = len(doc)
-        limit = min(n, max_pages) if max_pages and max_pages > 0 else n
-        pages: list[ri.OcrPage] = []
-        for i in range(limit):
-            try:
-                pix = doc[i].get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
-                img = pix.tobytes(output="jpeg")
-                del pix
-            except Exception as e:
-                log.error("page %d render failed: %s (%s)", i, e, type(e).__name__)
-                pages.append(ri.OcrPage(page_index=i, supplier=None, amount=None, date=None, id_number=None))
-                continue
-            page = _try_extract_page_gemini(invoice_model, img, i, model_name=model_name, usage=usage)
-            if retry_with_rotation and ri._likely_misread(page):
-                best = page
-                log.info("page %d looked misread (non-null=%d) — trying rotations", i, ri._count_non_null(page))
-                for rotation in (180, 90, 270):
-                    try:
-                        rotated_bytes = ri._rotate_png_bytes(img, rotation)
-                    except Exception as e:
-                        log.warning("page %d rotation %d° render failed: %s", i, rotation, e)
-                        continue
-                    candidate = _try_extract_page_gemini(invoice_model, rotated_bytes, i,
-                                                         model_name=model_name, usage=usage)
-                    del rotated_bytes
-                    if ri._count_non_null(candidate) > ri._count_non_null(best):
-                        log.info("page %d: rotation %d° improved (%d -> %d non-null)",
-                                 i, rotation, ri._count_non_null(best), ri._count_non_null(candidate))
-                        best = candidate
-                    if ri._count_non_null(best) >= 3:
-                        break
-                page = best
-            del img
-            pages.append(page)
-            log.info("page %d: supplier=%r amount=%s date=%s id=%s",
-                     i, page.supplier, page.amount, page.date, page.id_number)
-            if i % 10 == 9:
-                _gc.collect()
-    finally:
-        doc.close()
+
+    limit = min(n, max_pages) if max_pages and max_pages > 0 else n
+    pages: list[ri.OcrPage] = []
+
+    for batch_start in range(0, limit, _BATCH_SIZE):
+        batch_end = min(batch_start + _BATCH_SIZE, limit)
+        log.info("extract_pages_with_gemini: batch pages %d–%d / %d", batch_start, batch_end - 1, limit)
+        try:
+            doc = fitz.open(str(pdf_path))
+        except Exception as e:
+            log.error("extract_pages_with_gemini: reopen failed at batch %d: %s", batch_start, e)
+            break
+        try:
+            for i in range(batch_start, batch_end):
+                try:
+                    pix = doc[i].get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
+                    img = pix.tobytes(output="jpeg")
+                    del pix
+                except Exception as e:
+                    log.error("page %d render failed: %s (%s)", i, e, type(e).__name__)
+                    pages.append(ri.OcrPage(page_index=i, supplier=None, amount=None, date=None, id_number=None))
+                    continue
+                page = _try_extract_page_gemini(invoice_model, img, i, model_name=model_name, usage=usage)
+                if retry_with_rotation and ri._likely_misread(page):
+                    best = page
+                    log.info("page %d looked misread (non-null=%d) — trying rotations", i, ri._count_non_null(page))
+                    for rotation in (180, 90, 270):
+                        try:
+                            rotated_bytes = ri._rotate_png_bytes(img, rotation)
+                        except Exception as e:
+                            log.warning("page %d rotation %d° render failed: %s", i, rotation, e)
+                            continue
+                        candidate = _try_extract_page_gemini(invoice_model, rotated_bytes, i,
+                                                             model_name=model_name, usage=usage)
+                        del rotated_bytes
+                        if ri._count_non_null(candidate) > ri._count_non_null(best):
+                            log.info("page %d: rotation %d° improved (%d -> %d non-null)",
+                                     i, rotation, ri._count_non_null(best), ri._count_non_null(candidate))
+                            best = candidate
+                        if ri._count_non_null(best) >= 3:
+                            break
+                    page = best
+                del img
+                pages.append(page)
+                log.info("page %d: supplier=%r amount=%s date=%s id=%s",
+                         i, page.supplier, page.amount, page.date, page.id_number)
+        finally:
+            doc.close()
+            del doc
+        _gc.collect()
+
     return pages
 
 
