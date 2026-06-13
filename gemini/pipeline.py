@@ -8,7 +8,6 @@ Requires GOOGLE_API_KEY in the environment.
 """
 from __future__ import annotations
 
-import io
 import json as _json
 import logging
 import os
@@ -17,7 +16,6 @@ from pathlib import Path
 from typing import Optional
 
 import google.generativeai as genai
-from PIL import Image
 
 import reorder_invoices as ri
 from gemini.pricing import GEMINI_DEFAULT_MODEL, GeminiUsageTotals
@@ -82,8 +80,8 @@ def extract_fields_from_image_gemini(
     usage: GeminiUsageTotals,
 ) -> ri._ExtractedInvoice:
     """Send one page image to Gemini and return parsed invoice fields."""
-    img = Image.open(io.BytesIO(image_bytes))
-    response = invoice_model.generate_content([img, "Extract the invoice fields."])
+    image_part = genai.types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
+    response = invoice_model.generate_content([image_part, "Extract the invoice fields."])
     usage.add(getattr(response, "usage_metadata", None), model_name)
     return ri._ExtractedInvoice.model_validate_json(response.text)
 
@@ -144,7 +142,7 @@ def extract_pages_with_gemini(
         for i in range(limit):
             try:
                 pix = doc[i].get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
-                img = pix.tobytes(output="png")
+                img = pix.tobytes(output="jpeg")
                 del pix
             except Exception as e:
                 log.error("page %d render failed: %s (%s)", i, e, type(e).__name__)
@@ -195,10 +193,10 @@ def parse_table_pdf_with_gemini(
     images = ri.render_pdf_pages_to_png(pdf_path, dpi=dpi)
     all_rows: list[ri.TableRow] = []
     for page_i, img_bytes in enumerate(images):
-        img = Image.open(io.BytesIO(img_bytes))
+        img_part = genai.types.Part.from_bytes(data=img_bytes, mime_type="image/png")
         try:
             response = table_model.generate_content(
-                [img, "Extract every invoice row from this table page."]
+                [img_part, "Extract every invoice row from this table page."]
             )
             usage.add(getattr(response, "usage_metadata", None), model_name)
         except Exception as e:
