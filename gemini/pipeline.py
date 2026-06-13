@@ -4,25 +4,32 @@ Drop-in alternative to reorder_invoices.run() that calls Google Gemini instead
 of Anthropic Claude. All shared logic (PDF rendering, matching, output writing)
 is imported from reorder_invoices — nothing is duplicated here.
 
+Uses the Gemini REST API directly (urllib, Python stdlib) instead of the
+google-generativeai SDK. This eliminates the gRPC / protobuf C extensions
+(~100 MB of baseline RAM) that caused OOM on the Render 512 MB Starter plan.
+
 Requires GOOGLE_API_KEY in the environment.
 """
 from __future__ import annotations
 
+import base64 as _b64
 import gc as _gc
 import json as _json
 import logging
 import os
+import urllib.error as _urlerr
+import urllib.request as _urlreq
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
-
-import google.ai.generativelanguage as glm
-import google.generativeai as genai
 
 import reorder_invoices as ri
 from gemini.pricing import GEMINI_DEFAULT_MODEL, GeminiUsageTotals
 
 log = logging.getLogger("gemini.pipeline")
+
+# Gemini REST endpoint (v1beta supports response_schema / JSON mode).
+_GEMINI_REST_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 # Plain dict schemas for Gemini response_schema — Pydantic models with
 # default=None fields crash the google-generativeai protobuf converter.
@@ -56,18 +63,75 @@ _TABLE_SCHEMA = {
 
 
 # ---------------------------------------------------------------------------
-# Fatal-error detection for Gemini (mirrors ri._is_fatal_api_error)
+# REST API helper
+# ---------------------------------------------------------------------------
+def _gemini_generate(
+    api_key: str,
+    model_name: str,
+    system_instruction: str,
+    image_bytes: bytes,
+    prompt: str,
+    response_schema: dict,
+    max_output_tokens: int,
+    usage: GeminiUsageTotals,
+) -> str:
+    """POST one image to the Gemini generateContent REST endpoint.
+
+    Returns the text from the first candidate part. Raises RuntimeError on
+    HTTP errors (caller decides whether to retry or skip the page).
+    401/403 are re-raised as PermissionError so _is_fatal_gemini_error() can
+    catch them and abort the whole run immediately.
+    """
+    mime_type = "image/png" if image_bytes[:4] == b"\x89PNG" else "image/jpeg"
+    body = {
+        "systemInstruction": {"parts": [{"text": system_instruction}]},
+        "contents": [{
+            "parts": [
+                {"inline_data": {"mime_type": mime_type,
+                                 "data": _b64.b64encode(image_bytes).decode()}},
+                {"text": prompt},
+            ]
+        }],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": response_schema,
+            "maxOutputTokens": max_output_tokens,
+        },
+    }
+    url = f"{_GEMINI_REST_URL}/{model_name}:generateContent?key={api_key}"
+    req = _urlreq.Request(
+        url,
+        data=_json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with _urlreq.urlopen(req, timeout=120) as resp:
+            data = _json.loads(resp.read())
+    except _urlerr.HTTPError as e:
+        body_text = e.read().decode("utf-8", errors="replace")
+        if e.code in (401, 403):
+            raise PermissionError(f"Gemini auth error {e.code}: {body_text}") from e
+        raise RuntimeError(f"Gemini HTTP {e.code}: {body_text}") from e
+
+    usage.add_http(data.get("usageMetadata"), model_name)
+
+    candidates = data.get("candidates") or []
+    if not candidates:
+        raise ValueError(f"Gemini returned no candidates: {data}")
+    parts = (candidates[0].get("content") or {}).get("parts") or []
+    if not parts:
+        raise ValueError(f"Gemini returned empty content parts: {candidates[0]}")
+    return parts[0].get("text", "")
+
+
+# ---------------------------------------------------------------------------
+# Fatal-error detection
 # ---------------------------------------------------------------------------
 def _is_fatal_gemini_error(e: Exception) -> bool:
     """Return True for errors that will not improve with retries."""
-    try:
-        import google.auth.exceptions as _gauth
-        import google.api_core.exceptions as _gcore
-        if isinstance(e, (_gauth.TransportError, _gcore.PermissionDenied,
-                          _gcore.Unauthenticated, _gcore.ResourceExhausted)):
-            return True
-    except ImportError:
-        pass
+    if isinstance(e, PermissionError):
+        return True
     msg = str(e).lower()
     return "api key not valid" in msg or "quota exceeded" in msg or "permission denied" in msg
 
@@ -76,30 +140,36 @@ def _is_fatal_gemini_error(e: Exception) -> bool:
 # Single-page invoice extraction
 # ---------------------------------------------------------------------------
 def extract_fields_from_image_gemini(
-    invoice_model: genai.GenerativeModel,
     image_bytes: bytes,
     model_name: str,
+    api_key: str,
     usage: GeminiUsageTotals,
 ) -> ri._ExtractedInvoice:
     """Send one page image to Gemini and return parsed invoice fields."""
-    mime_type = "image/png" if image_bytes[:4] == b"\x89PNG" else "image/jpeg"
-    image_part = glm.Part(inline_data=glm.Blob(mime_type=mime_type, data=image_bytes))
-    response = invoice_model.generate_content([image_part, "Extract the invoice fields."])
-    usage.add(getattr(response, "usage_metadata", None), model_name)
-    return ri._ExtractedInvoice.model_validate_json(response.text)
+    text = _gemini_generate(
+        api_key=api_key,
+        model_name=model_name,
+        system_instruction=ri.EXTRACTION_SYSTEM_PROMPT,
+        image_bytes=image_bytes,
+        prompt="Extract the invoice fields.",
+        response_schema=_INVOICE_SCHEMA,
+        max_output_tokens=1024,
+        usage=usage,
+    )
+    return ri._ExtractedInvoice.model_validate_json(text)
 
 
 def _try_extract_page_gemini(
-    invoice_model: genai.GenerativeModel,
     img_bytes: bytes,
     page_index: int,
     *,
     model_name: str,
+    api_key: str,
     usage: GeminiUsageTotals,
 ) -> ri.OcrPage:
     """Extract one page; on non-fatal error returns an all-null OcrPage."""
     try:
-        ex = extract_fields_from_image_gemini(invoice_model, img_bytes, model_name, usage)
+        ex = extract_fields_from_image_gemini(img_bytes, model_name, api_key, usage)
     except Exception as e:
         if _is_fatal_gemini_error(e):
             raise
@@ -118,7 +188,7 @@ def _try_extract_page_gemini(
 # Full scanned-PDF extraction
 # ---------------------------------------------------------------------------
 _BATCH_SIZE = 10  # pages per fitz open/close cycle — keeps mmap'd PDF data bounded
-_MAX_IMG_PIXELS = 1240 * 1754  # ~150 DPI A4; extracted images above this are resized
+_MAX_IMG_PIXELS = 1240 * 1754  # ~150 DPI A4; resize extracted images above this
 
 
 def _malloc_trim() -> None:
@@ -134,12 +204,9 @@ def _page_to_jpeg(doc, page_index: int, dpi: int) -> bytes:
     """Extract or render one PDF page as JPEG bytes, capped at _MAX_IMG_PIXELS.
 
     For scanned PDFs with a single JPEG/PNG image per page, extracts the
-    original compressed bytes directly (no pixmap, far less memory). High-res
-    images (> _MAX_IMG_PIXELS) are downscaled so gRPC send-buffers stay
-    bounded across 100+ pages.
-
-    Falls back to fitz rendering for CCITT/JBIG2/multi-image pages — fitz
-    handles those formats natively even though PIL does not.
+    original compressed bytes directly — no pixmap, no 6-12 MB uncompressed
+    buffer. High-res images are downscaled. Falls back to fitz rendering for
+    CCITT/JBIG2/multi-image pages (fitz handles those natively).
     """
     import fitz
     import math as _math
@@ -188,10 +255,11 @@ def _page_to_jpeg(doc, page_index: int, dpi: int) -> bytes:
     del pix
     return result
 
+
 def extract_pages_with_gemini(
     pdf_path: str | Path,
-    invoice_model: genai.GenerativeModel,
     model_name: str = GEMINI_DEFAULT_MODEL,
+    api_key: str = "",
     dpi: int = ri.RENDER_DPI,
     max_pages: Optional[int] = None,
     retry_with_rotation: bool = True,
@@ -200,8 +268,7 @@ def extract_pages_with_gemini(
     """Render each page of the scanned PDF and extract fields via Gemini vision.
 
     The PDF is opened and closed every _BATCH_SIZE pages so the OS can reclaim
-    the memory-mapped PDF data between batches. Without this, a 100-page scanned
-    PDF can hold 100-300 MB of mmap'd data in RAM throughout the entire run.
+    the memory-mapped PDF data between batches.
     """
     import fitz
     if usage is None:
@@ -236,7 +303,8 @@ def extract_pages_with_gemini(
                     log.error("page %d image failed: %s (%s)", i, e, type(e).__name__)
                     pages.append(ri.OcrPage(page_index=i, supplier=None, amount=None, date=None, id_number=None))
                     continue
-                page = _try_extract_page_gemini(invoice_model, img, i, model_name=model_name, usage=usage)
+                page = _try_extract_page_gemini(img, i, model_name=model_name,
+                                                api_key=api_key, usage=usage)
                 if retry_with_rotation and ri._likely_misread(page):
                     best = page
                     log.info("page %d looked misread (non-null=%d) — trying rotations", i, ri._count_non_null(page))
@@ -246,8 +314,9 @@ def extract_pages_with_gemini(
                         except Exception as e:
                             log.warning("page %d rotation %d° render failed: %s", i, rotation, e)
                             continue
-                        candidate = _try_extract_page_gemini(invoice_model, rotated_bytes, i,
-                                                             model_name=model_name, usage=usage)
+                        candidate = _try_extract_page_gemini(rotated_bytes, i,
+                                                             model_name=model_name,
+                                                             api_key=api_key, usage=usage)
                         del rotated_bytes
                         if ri._count_non_null(candidate) > ri._count_non_null(best):
                             log.info("page %d: rotation %d° improved (%d -> %d non-null)",
@@ -276,8 +345,8 @@ def extract_pages_with_gemini(
 # ---------------------------------------------------------------------------
 def parse_table_pdf_with_gemini(
     pdf_path: str | Path,
-    table_model: genai.GenerativeModel,
     model_name: str = GEMINI_DEFAULT_MODEL,
+    api_key: str = "",
     dpi: int = ri.RENDER_DPI,
     usage: Optional[GeminiUsageTotals] = None,
 ) -> list[ri.TableRow]:
@@ -287,19 +356,24 @@ def parse_table_pdf_with_gemini(
     images = ri.render_pdf_pages_to_png(pdf_path, dpi=dpi)
     all_rows: list[ri.TableRow] = []
     for page_i, img_bytes in enumerate(images):
-        img_part = glm.Part(inline_data=glm.Blob(mime_type="image/png", data=img_bytes))
         try:
-            response = table_model.generate_content(
-                [img_part, "Extract every invoice row from this table page."]
+            text = _gemini_generate(
+                api_key=api_key,
+                model_name=model_name,
+                system_instruction=ri.TABLE_EXTRACTION_SYSTEM_PROMPT,
+                image_bytes=img_bytes,
+                prompt="Extract every invoice row from this table page.",
+                response_schema=_TABLE_SCHEMA,
+                max_output_tokens=8000,
+                usage=usage,
             )
-            usage.add(getattr(response, "usage_metadata", None), model_name)
         except Exception as e:
             if _is_fatal_gemini_error(e):
                 raise
             log.error("table page %d extraction failed (%s): %s", page_i, type(e).__name__, e)
             continue
         try:
-            extraction = ri._TableExtraction.model_validate_json(response.text)
+            extraction = ri._TableExtraction.model_validate_json(text)
         except Exception as e:
             log.error("table page %d JSON parse failed: %s", page_i, e)
             continue
@@ -341,28 +415,8 @@ def gemini_run(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
+    api_key = os.environ["GOOGLE_API_KEY"]
     usage = GeminiUsageTotals()
-
-    # Build two models: one for single-invoice pages, one for table pages.
-    invoice_model = genai.GenerativeModel(
-        model_name=model_name,
-        system_instruction=ri.EXTRACTION_SYSTEM_PROMPT,
-        generation_config=genai.GenerationConfig(
-            response_mime_type="application/json",
-            response_schema=_INVOICE_SCHEMA,
-            max_output_tokens=1024,
-        ),
-    )
-    table_model = genai.GenerativeModel(
-        model_name=model_name,
-        system_instruction=ri.TABLE_EXTRACTION_SYSTEM_PROMPT,
-        generation_config=genai.GenerationConfig(
-            response_mime_type="application/json",
-            response_schema=_TABLE_SCHEMA,
-            max_output_tokens=8000,
-        ),
-    )
 
     # Try pdfplumber first (fast, free). Fall back to Gemini vision if quality is poor.
     rows = ri.parse_table_pdf(table_pdf)
@@ -373,13 +427,13 @@ def gemini_run(
             "pdfplumber got %d rows but only %d useful — retrying with Gemini vision",
             len(rows), useful,
         )
-        rows = parse_table_pdf_with_gemini(table_pdf, table_model,
-                                            model_name=model_name, usage=usage)
+        rows = parse_table_pdf_with_gemini(table_pdf, model_name=model_name,
+                                            api_key=api_key, usage=usage)
     else:
         log.info("pdfplumber extracted %d rows (%d useful)", len(rows), useful)
 
     pages = extract_pages_with_gemini(
-        scanned_pdf, invoice_model, model_name=model_name,
+        scanned_pdf, model_name=model_name, api_key=api_key,
         max_pages=max_pages, usage=usage, dpi=150,
     )
 

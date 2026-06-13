@@ -45,6 +45,16 @@ class GeminiUsageTotals:
         if not self.model:
             self.model = model
 
+    def add_http(self, usage_metadata: dict | None, model: str) -> None:
+        """Add usage from a REST API usageMetadata dict (camelCase keys)."""
+        if not usage_metadata:
+            return
+        self.calls += 1
+        self.input_tokens  += usage_metadata.get("promptTokenCount",     0) or 0
+        self.output_tokens += usage_metadata.get("candidatesTokenCount", 0) or 0
+        if not self.model:
+            self.model = model
+
     def cost_usd(self) -> Decimal:
         prices = GEMINI_PRICING_USD.get(self.model)
         if prices is None:
