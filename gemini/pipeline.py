@@ -118,6 +118,7 @@ def _try_extract_page_gemini(
 # Full scanned-PDF extraction
 # ---------------------------------------------------------------------------
 _BATCH_SIZE = 10  # pages per fitz open/close cycle — keeps mmap'd PDF data bounded
+_MAX_IMG_PIXELS = 1240 * 1754  # ~150 DPI A4; extracted images above this are resized
 
 
 def _malloc_trim() -> None:
@@ -130,24 +131,54 @@ def _malloc_trim() -> None:
 
 
 def _page_to_jpeg(doc, page_index: int, dpi: int) -> bytes:
-    """Extract or render one PDF page as image bytes.
+    """Extract or render one PDF page as image bytes, capped at _MAX_IMG_PIXELS.
 
     For scanned PDFs (one embedded image per page) extracts the original
     compressed JPEG/PNG directly — no pixmap, no 6-12 MB uncompressed buffer.
-    Falls back to rendering when the page has multiple images or vector content.
+    High-res scans (200-300 DPI) are downscaled to _MAX_IMG_PIXELS so that
+    the bytes sent through gRPC are bounded and gRPC's send buffers don't
+    accumulate across 100 pages. Falls back to rendering for complex pages.
     """
     import fitz
+    import math as _math
+    from PIL import Image as _PILImage
+    import io as _io
+
+    img_bytes: bytes | None = None
     page = doc[page_index]
     images = page.get_images(full=True)
     if len(images) == 1:
         try:
             img_data = doc.extract_image(images[0][0])
-            return img_data["image"]  # original compressed bytes
+            img_bytes = img_data["image"]
         except Exception as e:
             log.debug("page %d direct-extract failed (%s), rendering instead", page_index, e)
-    pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
-    img_bytes = pix.tobytes(output="jpeg")
-    del pix
+
+    if img_bytes is None:
+        pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
+        img_bytes = pix.tobytes(output="jpeg")
+        del pix
+        return img_bytes  # already at target DPI, no resize needed
+
+    # Resize if the embedded image exceeds our target resolution.
+    # PIL reads JPEG dimensions from the header without a full decode.
+    im = _PILImage.open(_io.BytesIO(img_bytes))
+    w, h = im.size
+    if w * h > _MAX_IMG_PIXELS:
+        scale = _math.sqrt(_MAX_IMG_PIXELS / (w * h))
+        new_w = max(100, int(w * scale))
+        new_h = max(140, int(h * scale))
+        log.debug("page %d: resizing %dx%d → %dx%d", page_index, w, h, new_w, new_h)
+        im_small = im.resize((new_w, new_h), _PILImage.LANCZOS)
+        im.close()
+        del im
+        buf = _io.BytesIO()
+        im_small.save(buf, format="JPEG", quality=85)
+        im_small.close()
+        del im_small
+        return buf.getvalue()
+    im.close()
+    del im
     return img_bytes
 
 def extract_pages_with_gemini(
@@ -220,6 +251,8 @@ def extract_pages_with_gemini(
                     page = best
                 del img
                 pages.append(page)
+                _gc.collect()
+                _malloc_trim()
                 log.info("page %d: supplier=%r amount=%s date=%s id=%s",
                          i, page.supplier, page.amount, page.date, page.id_number)
         finally:
