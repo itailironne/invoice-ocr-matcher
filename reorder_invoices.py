@@ -690,6 +690,11 @@ def retry_failed_pages_with_rotation(
 # ---------------------------------------------------------------------------
 # Stage 3: match
 # ---------------------------------------------------------------------------
+# Matches any Hebrew city-like prefix directly followed by a dash, e.g. "בת ים-", "ראשון לציון-".
+# Requires Hebrew letters/spaces immediately before the dash (no space-dash gap like "תעודות רכש - ").
+_LOCATION_PREFIX_RE = re.compile(r'^[א-ת]+(?:\s[א-ת]+){0,3}-\s*')
+
+
 def _strip_location_prefix(name: Optional[str]) -> Optional[str]:
     """Remove leading location markers like 'בת ים-' from supplier names."""
     if not name:
@@ -698,6 +703,10 @@ def _strip_location_prefix(name: Optional[str]) -> Optional[str]:
     for prefix in SUPPLIER_LOCATION_PREFIXES:
         if s.startswith(prefix):
             return s[len(prefix):].strip()
+    # Fallback: strip any short Hebrew-word sequence directly followed by a dash
+    m = _LOCATION_PREFIX_RE.match(s)
+    if m:
+        return s[m.end():].strip()
     return s
 
 
