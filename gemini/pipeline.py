@@ -24,6 +24,36 @@ from gemini.pricing import GEMINI_DEFAULT_MODEL, GeminiUsageTotals
 
 log = logging.getLogger("gemini.pipeline")
 
+# Plain dict schemas for Gemini response_schema — Pydantic models with
+# default=None fields crash the google-generativeai protobuf converter.
+_INVOICE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "supplier":  {"type": "string", "nullable": True},
+        "amount":    {"type": "string", "nullable": True},
+        "date":      {"type": "string", "nullable": True},
+        "id_number": {"type": "string", "nullable": True},
+    },
+}
+
+_TABLE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "rows": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "supplier":  {"type": "string", "nullable": True},
+                    "amount":    {"type": "string", "nullable": True},
+                    "date_raw":  {"type": "string", "nullable": True},
+                    "id_number": {"type": "string", "nullable": True},
+                },
+            },
+        },
+    },
+}
+
 
 # ---------------------------------------------------------------------------
 # Fatal-error detection for Gemini (mirrors ri._is_fatal_api_error)
@@ -228,7 +258,7 @@ def gemini_run(
         system_instruction=ri.EXTRACTION_SYSTEM_PROMPT,
         generation_config=genai.GenerationConfig(
             response_mime_type="application/json",
-            response_schema=ri._ExtractedInvoice,
+            response_schema=_INVOICE_SCHEMA,
             max_output_tokens=1024,
         ),
     )
@@ -237,7 +267,7 @@ def gemini_run(
         system_instruction=ri.TABLE_EXTRACTION_SYSTEM_PROMPT,
         generation_config=genai.GenerationConfig(
             response_mime_type="application/json",
-            response_schema=ri._TableExtraction,
+            response_schema=_TABLE_SCHEMA,
             max_output_tokens=8000,
         ),
     )
