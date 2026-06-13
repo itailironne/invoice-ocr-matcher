@@ -5,7 +5,15 @@
 {# ── 1. STATS SUMMARY ── #}
 <div class="card">
   <div class="eyebrow">סיכום הרצה</div>
+  {# Detect silent extraction failure: pages were processed but Gemini was never called #}
+  {% set extraction_failed = summary.pages > 0 and summary.cost_usd is not none and summary.cost_usd == 0.0 %}
+  {% set no_table_rows = summary.rows == 0 and summary.pages > 0 %}
+
+  {% if extraction_failed %}
+  <h2 style="color:var(--err)">שגיאה בחילוץ</h2>
+  {% else %}
   <h2>ההתאמה הושלמה</h2>
+  {% endif %}
   <hr class="gold">
   <p class="muted">תיק <code>{{ job }}</code> · קבצי הפלט תחת <code>web_outputs/{{ job }}/</code></p>
 
@@ -25,7 +33,21 @@
   </p>
   {% endif %}
 
-  {% if summary.unmatched or summary.low_confidence %}
+  {% if extraction_failed %}
+  <div class="alert err" style="margin-top: 22px">
+    <svg class="alert-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/></svg>
+    <div>
+      <strong>החילוץ נכשל — לא בוצעו קריאות API (עלות $0.00).</strong>
+      פורמט התמונות בקובץ הסריקות אינו נתמך, או שחלה שגיאה לפני השליחה ל־Gemini.
+      <a href="{{ url_for('view_logs', job=job) }}" target="_blank" style="color:inherit;text-decoration:underline;">פתח לוג הרצה לאבחון</a>.
+    </div>
+  </div>
+  {% elif no_table_rows %}
+  <div class="alert warn" style="margin-top: 22px">
+    <svg class="alert-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
+    <div>לא חולצו שורות מהטבלה — ייתכן שקובץ הטבלה אינו מכיל ספקים וסכומים בפורמט הנדרש. <a href="{{ url_for('view_logs', job=job) }}" target="_blank" style="color:inherit;text-decoration:underline;">בדוק לוג הרצה</a>.</div>
+  </div>
+  {% elif summary.unmatched or summary.low_confidence %}
   <div class="alert warn" style="margin-top: 22px">
     <svg class="alert-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
     <div>חלק מהשורות לא הותאמו — ראה פירוט בסעיף "בעיות מפורטות" למטה.</div>
