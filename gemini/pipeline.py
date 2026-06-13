@@ -131,55 +131,62 @@ def _malloc_trim() -> None:
 
 
 def _page_to_jpeg(doc, page_index: int, dpi: int) -> bytes:
-    """Extract or render one PDF page as image bytes, capped at _MAX_IMG_PIXELS.
+    """Extract or render one PDF page as JPEG bytes, capped at _MAX_IMG_PIXELS.
 
-    For scanned PDFs (one embedded image per page) extracts the original
-    compressed JPEG/PNG directly — no pixmap, no 6-12 MB uncompressed buffer.
-    High-res scans (200-300 DPI) are downscaled to _MAX_IMG_PIXELS so that
-    the bytes sent through gRPC are bounded and gRPC's send buffers don't
-    accumulate across 100 pages. Falls back to rendering for complex pages.
+    For scanned PDFs with a single JPEG/PNG image per page, extracts the
+    original compressed bytes directly (no pixmap, far less memory). High-res
+    images (> _MAX_IMG_PIXELS) are downscaled so gRPC send-buffers stay
+    bounded across 100+ pages.
+
+    Falls back to fitz rendering for CCITT/JBIG2/multi-image pages — fitz
+    handles those formats natively even though PIL does not.
     """
     import fitz
     import math as _math
     from PIL import Image as _PILImage
     import io as _io
 
-    img_bytes: bytes | None = None
     page = doc[page_index]
+    img_bytes: bytes | None = None
     images = page.get_images(full=True)
     if len(images) == 1:
         try:
             img_data = doc.extract_image(images[0][0])
-            img_bytes = img_data["image"]
+            ext = (img_data.get("ext") or "").lower()
+            if ext in ("jpg", "jpeg", "png"):
+                img_bytes = img_data["image"]
+                log.debug("page %d: direct-extracted %s (%d bytes)", page_index, ext, len(img_bytes))
+            else:
+                log.debug("page %d: unsupported embedded format %r, using fitz render", page_index, ext)
         except Exception as e:
-            log.debug("page %d direct-extract failed (%s), rendering instead", page_index, e)
+            log.debug("page %d: extract_image failed (%s), using fitz render", page_index, e)
 
-    if img_bytes is None:
-        pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
-        img_bytes = pix.tobytes(output="jpeg")
-        del pix
-        return img_bytes  # already at target DPI, no resize needed
+    if img_bytes is not None:
+        try:
+            im = _PILImage.open(_io.BytesIO(img_bytes))
+            w, h = im.size
+            if w * h > _MAX_IMG_PIXELS:
+                scale = _math.sqrt(_MAX_IMG_PIXELS / (w * h))
+                new_w = max(100, int(w * scale))
+                new_h = max(140, int(h * scale))
+                log.debug("page %d: resizing %dx%d → %dx%d", page_index, w, h, new_w, new_h)
+                im_small = im.resize((new_w, new_h), _PILImage.LANCZOS)
+                im.close(); del im
+                buf = _io.BytesIO()
+                im_small.save(buf, format="JPEG", quality=85)
+                im_small.close(); del im_small
+                return buf.getvalue()
+            im.close(); del im
+            return img_bytes
+        except Exception as e:
+            log.debug("page %d: PIL failed (%s), falling back to fitz render", page_index, e)
 
-    # Resize if the embedded image exceeds our target resolution.
-    # PIL reads JPEG dimensions from the header without a full decode.
-    im = _PILImage.open(_io.BytesIO(img_bytes))
-    w, h = im.size
-    if w * h > _MAX_IMG_PIXELS:
-        scale = _math.sqrt(_MAX_IMG_PIXELS / (w * h))
-        new_w = max(100, int(w * scale))
-        new_h = max(140, int(h * scale))
-        log.debug("page %d: resizing %dx%d → %dx%d", page_index, w, h, new_w, new_h)
-        im_small = im.resize((new_w, new_h), _PILImage.LANCZOS)
-        im.close()
-        del im
-        buf = _io.BytesIO()
-        im_small.save(buf, format="JPEG", quality=85)
-        im_small.close()
-        del im_small
-        return buf.getvalue()
-    im.close()
-    del im
-    return img_bytes
+    # Fallback: render the page via fitz at target DPI.
+    # Handles CCITT, JBIG2, multi-image pages, and any PIL-unsupported format.
+    pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
+    result = pix.tobytes(output="jpeg")
+    del pix
+    return result
 
 def extract_pages_with_gemini(
     pdf_path: str | Path,
