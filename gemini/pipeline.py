@@ -8,6 +8,7 @@ Requires GOOGLE_API_KEY in the environment.
 """
 from __future__ import annotations
 
+import gc as _gc
 import json as _json
 import logging
 import os
@@ -174,6 +175,8 @@ def extract_pages_with_gemini(
             pages.append(page)
             log.info("page %d: supplier=%r amount=%s date=%s id=%s",
                      i, page.supplier, page.amount, page.date, page.id_number)
+            if i % 10 == 9:
+                _gc.collect()
     finally:
         doc.close()
     return pages

@@ -28,7 +28,16 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Iterable, Optional
 
-import anthropic
+class _LazyAnthropicModule:
+    """Load anthropic (and its heavy deps: httpx, tokenizers) only when the Claude
+    extraction path is actually called. The Gemini pipeline never uses it."""
+    def __getattr__(self, name: str):
+        import anthropic as _real
+        globals()["anthropic"] = _real  # swap proxy for real module after first access
+        return getattr(_real, name)
+
+anthropic = _LazyAnthropicModule()  # type: ignore[assignment]
+
 import pdfplumber
 import fitz  # PyMuPDF
 from pydantic import BaseModel, Field
