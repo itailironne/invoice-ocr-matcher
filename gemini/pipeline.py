@@ -154,7 +154,7 @@ def extract_fields_from_image_gemini(
         image_bytes=image_bytes,
         prompt="Extract the invoice fields.",
         response_schema=_INVOICE_SCHEMA,
-        max_output_tokens=1024,
+        max_output_tokens=4096,
         usage=usage,
     )
     return ri._ExtractedInvoice.model_validate_json(text)
