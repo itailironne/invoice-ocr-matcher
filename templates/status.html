@@ -25,9 +25,10 @@
     <div>
       <div id="error-msg"></div>
       <div id="restart-hint" style="display:none; margin-top:8px; font-size:13px;">
-        השרת הופעל מחדש במהלך העיבוד (מגבלת זיכרון של Render). אנא
-        <a href="{{ url_for('index') }}">חזור והעלה שוב</a>.
-        כדי לעבד 100 עמודים בצורה אמינה, שקול לחלק את הסריקות לקובצי PDF קטנים יותר (30–40 עמודים כל אחד).
+        השרת הופעל מחדש במהלך העיבוד והקבצים הזמניים נמחקו. זה קורה בדרך כלל
+        כאשר מתפרסמת גרסה חדשה (deploy) בזמן הריצה, ולעיתים נדירות עקב חריגת זיכרון.
+        אנא <a href="{{ url_for('index') }}">חזור והעלה שוב</a> — והפעם אל תעלה גרסה חדשה לקוד עד שהריצה תסתיים.
+        אם הקובץ גדול מאוד (100+ עמודים), אפשר גם לחלק אותו לקבצים של 30–40 עמודים.
       </div>
     </div>
   </div>
@@ -75,9 +76,39 @@
           titleEl.textContent = 'שגיאה בעיבוד';
           msgEl.textContent = '';
           errBox.style.display = 'flex';
-          const isRestart = !data.msg || data.msg.includes('job not found') || data.msg.includes('not found');
-          errMsg.textContent = isRestart ? '' : (data.msg || 'שגיאה לא ידועה');
-          if (isRestart) document.getElementById('restart-hint').style.display = 'block';
+          const raw = (data.msg || '').trim();
+          // "job not found" (404) = the temp job folder vanished → the container
+          // was redeployed mid-run (or, rarely, OOM). Anything else is a REAL
+          // pipeline error whose actual text we want to show the user.
+          const isRestart = !raw || raw.includes('job not found') || raw.includes('not found');
+          if (isRestart) {
+            errMsg.textContent = '';
+            document.getElementById('restart-hint').style.display = 'block';
+          } else {
+            // Show the real error: headline first line, full traceback collapsible.
+            errMsg.innerHTML = '';
+            const firstLine = raw.split('\n')[0];
+            const head = document.createElement('div');
+            head.style.fontWeight = '600';
+            head.style.direction = 'ltr';
+            head.style.textAlign = 'left';
+            head.textContent = firstLine;
+            errMsg.appendChild(head);
+            if (raw.length > firstLine.length) {
+              const det = document.createElement('details');
+              det.style.marginTop = '8px';
+              const sum = document.createElement('summary');
+              sum.style.cursor = 'pointer';
+              sum.style.fontSize = '13px';
+              sum.textContent = 'פרטים טכניים מלאים';
+              const pre = document.createElement('pre');
+              pre.style.cssText = 'white-space:pre-wrap; font-size:12px; margin-top:8px; max-height:300px; overflow:auto; direction:ltr; text-align:left;';
+              pre.textContent = raw;
+              det.appendChild(sum);
+              det.appendChild(pre);
+              errMsg.appendChild(det);
+            }
+          }
         } else {
           if (data.msg) msgEl.textContent = data.msg;
           setTimeout(poll, 3000);
