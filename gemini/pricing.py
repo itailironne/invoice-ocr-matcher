@@ -10,10 +10,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-GEMINI_DEFAULT_MODEL = "gemini-2.5-pro"
+GEMINI_DEFAULT_MODEL = "gemini-3.5-flash"
 
 # USD per token
 GEMINI_PRICING_USD: dict[str, dict[str, Decimal]] = {
+    "gemini-3.5-flash":           {"input": Decimal("0.00000015"),  "output": Decimal("0.0000006")},
     "gemini-2.5-pro":             {"input": Decimal("0.00000125"),  "output": Decimal("0.00001")},
     "gemini-2.5-pro-preview":     {"input": Decimal("0.00000125"),  "output": Decimal("0.00001")},
     "gemini-2.5-flash":           {"input": Decimal("0.00000015"),  "output": Decimal("0.0000006")},
