@@ -66,6 +66,12 @@ def _check_api_key() -> Optional[str]:
     return None
 
 
+def _check_anthropic_key() -> Optional[str]:
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return "ANTHROPIC_API_KEY is not set in the server's environment. Set it and restart the app."
+    return None
+
+
 def _new_job_dir() -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     job = f"{stamp}-{secrets.token_hex(3)}"
@@ -188,9 +194,9 @@ def job_progress(job: str):
 @app.route("/test", methods=["GET", "POST"])
 def test_page():
     if request.method == "GET":
-        return render_template("test.html", api_key_missing=_check_api_key() is not None)
+        return render_template("test.html", api_key_missing=_check_anthropic_key() is not None)
 
-    err = _check_api_key()
+    err = _check_anthropic_key()
     if err:
         return render_template("error.html", message=err), 500
 
@@ -231,9 +237,9 @@ def test_page():
 @app.route("/batch", methods=["GET", "POST"])
 def batch():
     if request.method == "GET":
-        return render_template("batch.html", api_key_missing=_check_api_key() is not None)
+        return render_template("batch.html", api_key_missing=_check_anthropic_key() is not None)
 
-    err = _check_api_key()
+    err = _check_anthropic_key()
     if err:
         return render_template("error.html", message=err), 500
 

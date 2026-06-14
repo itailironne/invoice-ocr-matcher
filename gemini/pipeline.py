@@ -96,6 +96,7 @@ def _gemini_generate(
             "responseMimeType": "application/json",
             "responseSchema": response_schema,
             "maxOutputTokens": max_output_tokens,
+            "thinkingConfig": {"thinkingBudget": 1024},
         },
     }
     url = f"{_GEMINI_REST_URL}/{model_name}:generateContent?key={api_key}"
