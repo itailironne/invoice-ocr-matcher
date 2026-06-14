@@ -694,6 +694,23 @@ def retry_failed_pages_with_rotation(
 # Requires Hebrew letters/spaces immediately before the dash (no space-dash gap like "תעודות רכש - ").
 _LOCATION_PREFIX_RE = re.compile(r'^[א-ת]+(?:\s[א-ת]+){0,3}-\s*')
 
+# Known equivalent supplier names: Hebrew in payment table ↔ English/variant on scanned invoice.
+# Keys are lower-cased after prefix stripping. Both sides of a match are checked.
+_SUPPLIER_ALIASES: dict[str, list[str]] = {
+    "אלקטורה":          ["אלקטרה"],                        # typo in table (ו→ה)
+    "אינפניה":          ["אינפיניה", "infinia"],
+    "אפיק":             ["afik", "afik oberman"],
+    "הי סלולר":         ["high cellular"],
+    "וויסטנט":          ["whitescent", "white scent"],
+    "וויטסנט":          ["whitescent", "white scent"],
+    "טלקומניקצ":        ["a.b.h", "abh", "communication"],
+    "חברת טלקומניקצ":  ["a.b.h", "abh", "communication"],
+    "נטחון":            ["netvision", "net vision"],
+    "נטווזן":           ["netvision", "net vision"],
+    "איתן עמיחי":       ["rentokil"],
+    "פ.דיויד":          ["פ.דויד", "פ.דייויד"],
+}
+
 
 def _strip_location_prefix(name: Optional[str]) -> Optional[str]:
     """Remove leading location markers like 'בת ים-' from supplier names."""
@@ -713,11 +730,21 @@ def _strip_location_prefix(name: Optional[str]) -> Optional[str]:
 def _score_supplier(a: Optional[str], b: Optional[str]) -> float:
     if not a or not b:
         return 0.0
-    # Strip location prefixes from both sides — table entries often carry a
-    # location like "בת ים-X" while the scanned receipt has just "X".
-    a_clean = _strip_location_prefix(a)
-    b_clean = _strip_location_prefix(b)
-    return float(fuzz.token_set_ratio(a_clean, b_clean))
+    a_clean = _strip_location_prefix(a) or ""
+    b_clean = _strip_location_prefix(b) or ""
+    score = float(fuzz.token_set_ratio(a_clean, b_clean))
+    if score >= 60:
+        return score
+    # Try alias expansion — catches Hebrew↔English transliterations and typos.
+    a_lo, b_lo = a_clean.lower(), b_clean.lower()
+    for key, variants in _SUPPLIER_ALIASES.items():
+        if fuzz.token_set_ratio(a_lo, key) >= 70:
+            for v in variants:
+                score = max(score, float(fuzz.token_set_ratio(v, b_lo)))
+        if fuzz.token_set_ratio(b_lo, key) >= 70:
+            for v in variants:
+                score = max(score, float(fuzz.token_set_ratio(v, a_lo)))
+    return score
 
 
 def _score_amount(
