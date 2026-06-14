@@ -17,6 +17,7 @@ import gc as _gc
 import json as _json
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import urllib.error as _urlerr
 import urllib.request as _urlreq
 from decimal import Decimal
@@ -200,6 +201,7 @@ def _try_extract_page_gemini(
 # ---------------------------------------------------------------------------
 _BATCH_SIZE = 10  # pages per fitz open/close cycle — keeps mmap'd PDF data bounded
 _MAX_IMG_PIXELS = 1240 * 1754  # ~150 DPI A4; resize extracted images above this
+_MAX_CONCURRENCY = 5  # pages extracted in parallel — each is mostly an API wait
 
 
 def _malloc_trim() -> None:
@@ -306,45 +308,65 @@ def extract_pages_with_gemini(
         except Exception as e:
             log.error("extract_pages_with_gemini: reopen failed at batch %d: %s", batch_start, e)
             break
+        # Phase 1 — render every page image in this batch single-threaded. The
+        # fitz document is NOT thread-safe, so all doc access happens here; we
+        # then close it before any network work to free the mmap'd PDF data.
+        batch_imgs: dict[int, Optional[bytes]] = {}
         try:
             for i in range(batch_start, batch_end):
                 try:
-                    img = _page_to_jpeg(doc, i, dpi)
+                    batch_imgs[i] = _page_to_jpeg(doc, i, dpi)
                 except Exception as e:
                     log.error("page %d image failed: %s (%s)", i, e, type(e).__name__)
-                    pages.append(ri.OcrPage(page_index=i, supplier=None, amount=None, date=None, id_number=None))
-                    continue
-                page = _try_extract_page_gemini(img, i, model_name=model_name,
-                                                api_key=api_key, usage=usage)
-                if retry_with_rotation and ri._likely_misread(page):
-                    best = page
-                    log.info("page %d looked misread (non-null=%d) — trying rotations", i, ri._count_non_null(page))
-                    for rotation in (180, 90, 270):
-                        try:
-                            rotated_bytes = ri._rotate_png_bytes(img, rotation)
-                        except Exception as e:
-                            log.warning("page %d rotation %d° render failed: %s", i, rotation, e)
-                            continue
-                        candidate = _try_extract_page_gemini(rotated_bytes, i,
-                                                             model_name=model_name,
-                                                             api_key=api_key, usage=usage)
-                        del rotated_bytes
-                        if ri._count_non_null(candidate) > ri._count_non_null(best):
-                            log.info("page %d: rotation %d° improved (%d -> %d non-null)",
-                                     i, rotation, ri._count_non_null(best), ri._count_non_null(candidate))
-                            best = candidate
-                        if ri._count_non_null(best) >= 3:
-                            break
-                    page = best
-                del img
-                pages.append(page)
-                _gc.collect()
-                _malloc_trim()
-                log.info("page %d: supplier=%r amount=%s date=%s id=%s",
-                         i, page.supplier, page.amount, page.date, page.id_number)
+                    batch_imgs[i] = None
         finally:
             doc.close()
             del doc
+
+        # Phase 2 — extract fields concurrently. Each page is mostly an API wait
+        # (the GIL is released during the urlopen), so up to _MAX_CONCURRENCY run
+        # at once. Results keyed by page index so output order is preserved.
+        def _extract_one(i: int, img: Optional[bytes]) -> ri.OcrPage:
+            if img is None:
+                return ri.OcrPage(page_index=i, supplier=None, amount=None, date=None, id_number=None)
+            page = _try_extract_page_gemini(img, i, model_name=model_name,
+                                            api_key=api_key, usage=usage)
+            if retry_with_rotation and ri._likely_misread(page):
+                best = page
+                log.info("page %d looked misread (non-null=%d) — trying rotations", i, ri._count_non_null(page))
+                for rotation in (180, 90, 270):
+                    try:
+                        rotated_bytes = ri._rotate_png_bytes(img, rotation)
+                    except Exception as e:
+                        log.warning("page %d rotation %d° render failed: %s", i, rotation, e)
+                        continue
+                    candidate = _try_extract_page_gemini(rotated_bytes, i,
+                                                         model_name=model_name,
+                                                         api_key=api_key, usage=usage)
+                    del rotated_bytes
+                    if ri._count_non_null(candidate) > ri._count_non_null(best):
+                        log.info("page %d: rotation %d° improved (%d -> %d non-null)",
+                                 i, rotation, ri._count_non_null(best), ri._count_non_null(candidate))
+                        best = candidate
+                    if ri._count_non_null(best) >= 3:
+                        break
+                page = best
+            return page
+
+        results: dict[int, ri.OcrPage] = {}
+        with ThreadPoolExecutor(max_workers=_MAX_CONCURRENCY) as pool:
+            future_to_i = {pool.submit(_extract_one, i, img): i
+                           for i, img in batch_imgs.items()}
+            for fut in as_completed(future_to_i):
+                i = future_to_i[fut]
+                page = fut.result()  # re-raises fatal Gemini errors (quota/auth) → aborts run
+                results[i] = page
+                log.info("page %d: supplier=%r amount=%s date=%s id=%s",
+                         i, page.supplier, page.amount, page.date, page.id_number)
+
+        for i in range(batch_start, batch_end):
+            pages.append(results[i])
+        batch_imgs.clear()
         _gc.collect()
         _malloc_trim()
 

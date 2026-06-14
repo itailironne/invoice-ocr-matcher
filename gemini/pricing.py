@@ -7,8 +7,10 @@ will be slightly under-counted.
 """
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import ClassVar
 
 GEMINI_DEFAULT_MODEL = "gemini-3.1-pro-preview"
 
@@ -36,6 +38,8 @@ class GeminiUsageTotals:
     input_tokens: int = 0
     output_tokens: int = 0
     model: str = ""
+    # Shared lock so concurrent page workers can update totals safely.
+    _lock: ClassVar[threading.Lock] = threading.Lock()
 
     def add(self, usage_metadata, model: str) -> None:
         """Add a Gemini GenerateContentResponse.usage_metadata to this accumulator."""
@@ -51,11 +55,12 @@ class GeminiUsageTotals:
         """Add usage from a REST API usageMetadata dict (camelCase keys)."""
         if not usage_metadata:
             return
-        self.calls += 1
-        self.input_tokens  += usage_metadata.get("promptTokenCount",     0) or 0
-        self.output_tokens += usage_metadata.get("candidatesTokenCount", 0) or 0
-        if not self.model:
-            self.model = model
+        with self._lock:
+            self.calls += 1
+            self.input_tokens  += usage_metadata.get("promptTokenCount",     0) or 0
+            self.output_tokens += usage_metadata.get("candidatesTokenCount", 0) or 0
+            if not self.model:
+                self.model = model
 
     def cost_usd(self) -> Decimal:
         prices = GEMINI_PRICING_USD.get(self.model)
