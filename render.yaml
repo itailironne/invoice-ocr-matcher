@@ -7,23 +7,24 @@
 #   3. Pick the invoice-reorder repo and click "Apply"
 #   4. Set ANTHROPIC_API_KEY in the env-vars section (Render won't run without it)
 #
-# Free tier caveats:
-#   - Service spins down after 15 min of inactivity (~30 sec cold start)
+# Plan notes:
+#   - Standard = 2 GB RAM, 1 CPU. Needed for full ~100-page runs (free tier's
+#     512 MB OOMs on large batches). Keep this in sync with the live dashboard
+#     plan, because Blueprint re-syncs can otherwise downgrade the service.
 #   - Filesystem is ephemeral (web_outputs/ is wiped on restart)
-#   - 512 MB RAM, 0.1 CPU — fine for ≤30-page runs, may OOM on very large batches
 #
 services:
   - type: web
     name: invoice-ocr-matcher
     runtime: python
-    plan: free
+    plan: standard
     region: oregon
     branch: main
 
     # Render auto-detects requirements.txt; explicit build command for clarity.
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
 
-    # Gunicorn with a single worker (free tier RAM doesn't fit more) and a long
+    # Gunicorn with a single worker (keeps peak RAM bounded) and a long
     # request timeout so multi-page Claude vision runs don't get killed.
     # --timeout 0 disables the worker timeout (safe with one worker, single-threaded).
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 0 --access-logfile -
