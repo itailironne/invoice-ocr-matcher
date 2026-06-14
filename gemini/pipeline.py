@@ -120,6 +120,16 @@ def _gemini_generate(
     candidates = data.get("candidates") or []
     if not candidates:
         raise ValueError(f"Gemini returned no candidates: {data}")
+    finish = candidates[0].get("finishReason")
+    if finish == "MAX_TOKENS":
+        meta = data.get("usageMetadata") or {}
+        log.warning(
+            "Gemini hit MAX_TOKENS (maxOutputTokens=%d, thinking=%s, output=%s) — "
+            "response is TRUNCATED and JSON will not parse. Raise max_output_tokens.",
+            max_output_tokens,
+            meta.get("thoughtsTokenCount"),
+            meta.get("candidatesTokenCount"),
+        )
     parts = (candidates[0].get("content") or {}).get("parts") or []
     if not parts:
         raise ValueError(f"Gemini returned empty content parts: {candidates[0]}")
@@ -365,7 +375,9 @@ def parse_table_pdf_with_gemini(
                 image_bytes=img_bytes,
                 prompt="Extract every invoice row from this table page.",
                 response_schema=_TABLE_SCHEMA,
-                max_output_tokens=8000,
+                # 8000 truncated dense Hebrew pages mid-JSON (thinkingBudget eats
+                # into this too); 16000 leaves headroom so rows aren't dropped.
+                max_output_tokens=16000,
                 usage=usage,
             )
         except Exception as e:
